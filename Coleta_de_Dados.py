@@ -51,7 +51,7 @@ class SupabaseManager:
                 registros.append(dados_validados)
             
             if registros:
-                self.supabase.table('imoveisatual').insert(registros).execute()
+                self.supabase.table('imoveisweb').insert(registros).execute()
             return len(registros)
         except Exception as e:
             st.error(f"Erro ao inserir dados: {str(e)}")
