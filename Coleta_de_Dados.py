@@ -121,8 +121,10 @@ class ImoveisScraper:
             opcoes_chrome.add_argument('--disable-extensions')
             opcoes_chrome.add_argument('--disable-gpu')
             
-            # Usar webdriver_manager para gerenciar o ChromeDriver
-            service = Service(ChromeDriverManager().install())
+            # Caminho específico para o chromium no ambiente Linux
+            opcoes_chrome.binary_location = "/usr/bin/chromium"
+            
+            service = Service(ChromeDriverManager(path="/usr/local/bin/chromedriver").install())
             navegador = webdriver.Chrome(service=service, options=opcoes_chrome)
             
             # Configurações adicionais para evitar detecção
