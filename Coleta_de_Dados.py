@@ -8,17 +8,10 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from selenium.common.exceptions import TimeoutException
 from webdriver_manager.chrome import ChromeDriverManager
-import undetected_chromedriver as uc
 from bs4 import BeautifulSoup
 import traceback
-from supabase import create_client
+from supabase import create_client, Client
 from decimal import Decimal
-
-# Configurações do Supabase
-SUPABASE_URL = st.secrets["SUPABASE_URL"]
-SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
-
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # Configuração do tema e estilo da página
 st.set_page_config(
@@ -68,20 +61,19 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+# Inicialização do Supabase com tratamento de erro
+try:
+    supabase: Client = create_client(
+        st.secrets["SUPABASE_URL"],
+        st.secrets["SUPABASE_KEY"]
+    )
+except Exception as e:
+    st.error(f"Erro ao conectar com Supabase: {str(e)}")
+    supabase = None
+
 def configurar_driver():
-    """Configura o Chrome WebDriver com opções avançadas para evitar detecção"""
+    """Configura o Chrome WebDriver com opções avançadas"""
     try:
-        options = uc.ChromeOptions()
-        options.add_argument('--headless')
-        options.add_argument('--disable-gpu')
-        options.add_argument('--no-sandbox')
-        options.add_argument('--disable-dev-shm-usage')
-        options.add_argument('--window-size=1920,1080')
-        options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
-        
-        return uc.Chrome(options=options)
-    except Exception as e:
-        st.warning("Usando configuração alternativa do ChromeDriver...")
         chrome_options = Options()
         chrome_options.add_argument('--headless')
         chrome_options.add_argument('--no-sandbox')
@@ -92,12 +84,14 @@ def configurar_driver():
         
         service = Service(ChromeDriverManager().install())
         return webdriver.Chrome(service=service, options=chrome_options)
+    except Exception as e:
+        st.error(f"Erro ao configurar Chrome Driver: {str(e)}")
+        return None
 
 def converter_preco(valor):
     """Converte string de preço para float"""
     try:
         if isinstance(valor, str):
-            # Remove 'R$ ' e converte para float
             valor_limpo = valor.replace('R$ ', '').replace('.', '').replace(',', '.')
             return float(valor_limpo)
         return float(valor)
@@ -152,9 +146,8 @@ def extrair_dados_html(html):
             preco_decimal = converter_preco(preco)
             area_decimal = converter_area(area)
             
-            # Preparar dados para o Supabase - Usando as chaves corretas
             dados.append({
-                'cardid': card_id,  # Mantemos minúsculo aqui
+                'cardid': card_id,
                 'preco_real': float(preco_decimal),
                 'endereco': endereco,
                 'localidade': localidade,
@@ -170,6 +163,10 @@ def extrair_dados_html(html):
 
 def inserir_dados_supabase(dados):
     """Insere dados no Supabase"""
+    if not supabase:
+        st.error("Conexão com Supabase não está disponível")
+        return 0
+        
     registros_inseridos = 0
     for registro in dados:
         try:
@@ -183,7 +180,8 @@ def inserir_dados_supabase(dados):
             }
             supabase.table('imoveisweb').insert([dados_validados]).execute()
             registros_inseridos += 1
-        except Exception:
+        except Exception as e:
+            st.error(f"Erro ao inserir registro: {str(e)}")
             continue
     return registros_inseridos
 
@@ -231,20 +229,27 @@ def coletar_dados_imoveis():
                 status_text.markdown(f"**Status:** Coletando dados da página {pagina + 1}...")
                 
                 driver = configurar_driver()
+                if not driver:
+                    st.error("Não foi possível inicializar o Chrome Driver")
+                    break
+                    
                 url = f"https://www.imovelweb.com.br/terrenos-venda-eusebio-ce{'-pagina-' + str(pagina + 1) if pagina > 0 else ''}.html"
                 
-                driver.get(url)
-                time.sleep(3)
-                
-                for i in range(10):
-                    driver.execute_script(f"window.scrollTo(0, {i * 300});")
-                    time.sleep(0.3)
-                
-                dados_pagina = extrair_dados_html(driver.page_source)
-                if dados_pagina:
-                    dados_total.extend(dados_pagina)
-                
-                driver.quit()
+                try:
+                    driver.get(url)
+                    time.sleep(3)
+                    
+                    for i in range(10):
+                        driver.execute_script(f"window.scrollTo(0, {i * 300});")
+                        time.sleep(0.3)
+                    
+                    dados_pagina = extrair_dados_html(driver.page_source)
+                    if dados_pagina:
+                        dados_total.extend(dados_pagina)
+                except Exception as e:
+                    st.error(f"Erro ao coletar dados da página {pagina + 1}: {str(e)}")
+                finally:
+                    driver.quit()
                 
                 # Atualizar interface
                 progress = (pagina + 1) / num_paginas
@@ -277,7 +282,8 @@ def coletar_dados_imoveis():
                 st.warning('⚠️ Nenhum dado novo encontrado para coleta.')
                 
         except Exception as e:
-            st.error('❌ Ocorreu um erro durante a coleta. Por favor, tente novamente.')
+            st.error(f'❌ Ocorreu um erro durante a coleta: {str(e)}')
+            st.error(traceback.format_exc())
 
 if __name__ == "__main__":
     coletar_dados_imoveis()
