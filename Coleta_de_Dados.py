@@ -15,8 +15,8 @@ from supabase import create_client
 from decimal import Decimal
 
 # Configurações do Supabase
-SUPABASE_URL = "https://hcelxnzrzginhmvjalit.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhjZWx4bnpyemdpbmhtdmphbGl0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzcwNDc2MDgsImV4cCI6MjA1MjYyMzYwOH0.qT1Gi55YjHRKk2hokqqJvgWshkwy5pKzVyRW5QpMQro"
+SUPABASE_URL = st.secrets["SUPABASE_URL"]
+SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
