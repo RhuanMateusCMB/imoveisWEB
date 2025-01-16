@@ -3,14 +3,19 @@ import pandas as pd
 import time
 import random
 import re
-from playwright.sync_api import sync_playwright
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 from bs4 import BeautifulSoup
 import traceback
 from supabase import create_client, Client
 from dataclasses import dataclass
-from typing import Optional, List, Dict
 import logging
 from datetime import datetime
+from typing import Optional, List, Dict
 
 @dataclass
 class ConfiguracaoScraper:
@@ -23,9 +28,30 @@ class ConfiguracaoScraper:
 st.set_page_config(
     page_title="Coletor de Dados Imobiliários - Eusébio",
     page_icon="🏠",
-    layout="wide",
-    initial_sidebar_state="collapsed"
+    layout="wide"
 )
+
+# CSS customizado
+st.markdown("""
+    <style>
+        .main {
+            padding: 2rem;
+        }
+        .stProgress > div > div > div > div {
+            background-color: #00a6ed;
+        }
+        .stButton > button {
+            background-color: #00a6ed;
+            color: white;
+            border-radius: 5px;
+            padding: 0.5rem 2rem;
+            font-weight: 500;
+        }
+        .stButton > button:hover {
+            background-color: #0090d1;
+        }
+    </style>
+""", unsafe_allow_html=True)
 
 class SupabaseManager:
     def __init__(self):
@@ -34,9 +60,6 @@ class SupabaseManager:
         self.supabase = create_client(self.url, self.key)
 
     def inserir_dados(self, df):
-        result = self.supabase.table('imoveisweb').select('cardID').order('cardID.desc').limit(1).execute()
-        ultimo_id = result.data[0]['cardID'] if result.data else 0
-        
         registros_inseridos = 0
         for _, row in df.iterrows():
             try:
@@ -68,70 +91,66 @@ class ImoveisScraper:
         )
         return logging.getLogger(__name__)
 
-    def coletar_dados(self, num_paginas: int = 1) -> Optional[pd.DataFrame]:
-        dados_total = []
-        status = st.empty()
-        progress_bar = st.progress(0)
-        
+    def _get_random_user_agent(self):
+        user_agents = [
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/120.0.0.0 Safari/537.36'
+        ]
+        return random.choice(user_agents)
+
+    def _configurar_navegador(self) -> webdriver.Chrome:
         try:
-            with sync_playwright() as p:
-                # Configurações do navegador
-                browser = p.chromium.launch(
-                    headless=True,
-                    args=[
-                        '--no-sandbox',
-                        '--disable-setuid-sandbox',
-                        '--disable-dev-shm-usage',
-                        '--disable-accelerated-2d-canvas',
-                        '--no-first-run',
-                        '--no-zygote',
-                        '--disable-gpu'
-                    ]
-                )
-                
-                context = browser.new_context(
-                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                    viewport={'width': 1920, 'height': 1080}
-                )
-                
-                page = context.new_page()
-                
-                for pagina in range(num_paginas):
-                    status.text(f"⏳ Processando página {pagina + 1}/{num_paginas}")
-                    progress_bar.progress((pagina + 1) / num_paginas)
-                    
-                    url = f"https://www.imovelweb.com.br/terrenos-venda-eusebio-ce{'-pagina-' + str(pagina + 1) if pagina > 0 else ''}.html"
-                    
-                    try:
-                        page.goto(url, wait_until='networkidle', timeout=60000)
-                        page.wait_for_selector('div[data-qa="posting PROPERTY"]', timeout=30000)
-                        
-                        # Scroll suave
-                        for _ in range(10):
-                            page.mouse.wheel(0, 300)
-                            time.sleep(0.3)
-                        
-                        content = page.content()
-                        dados_pagina = self._extrair_dados_html(content)
-                        if dados_pagina:
-                            dados_total.extend(dados_pagina)
-                            
-                    except Exception as e:
-                        self.logger.error(f"Erro na página {pagina + 1}: {str(e)}")
-                        continue
-                    
-                    time.sleep(random.uniform(3, 6))
-                
-                browser.close()
+            opcoes_chrome = Options()
+            opcoes_chrome.add_argument('--headless=new')
+            opcoes_chrome.add_argument('--no-sandbox')
+            opcoes_chrome.add_argument('--disable-dev-shm-usage')
+            opcoes_chrome.add_argument('--window-size=1920,1080')
+            opcoes_chrome.add_argument('--disable-blink-features=AutomationControlled')
+            opcoes_chrome.add_argument('--enable-javascript')
             
-            if dados_total:
-                return pd.DataFrame(dados_total)
-            return None
+            # Headers mais realistas
+            user_agent = self._get_random_user_agent()
+            opcoes_chrome.add_argument(f'--user-agent={user_agent}')
+            opcoes_chrome.add_argument('--accept-language=pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7')
             
+            # Configurações adicionais
+            opcoes_chrome.add_argument('--disable-notifications')
+            opcoes_chrome.add_argument('--disable-popup-blocking')
+            opcoes_chrome.add_argument('--disable-extensions')
+            opcoes_chrome.add_argument('--disable-gpu')
+            
+            service = Service("/usr/bin/chromedriver")
+            navegador = webdriver.Chrome(service=service, options=opcoes_chrome)
+            
+            # Configurações adicionais para evitar detecção
+            navegador.execute_cdp_cmd('Network.setUserAgentOverride', {
+                "userAgent": user_agent,
+                "platform": "Windows NT 10.0; Win64; x64"
+            })
+            
+            navegador.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            
+            return navegador
         except Exception as e:
-            self.logger.error(f"Erro crítico: {str(e)}")
-            st.error(f"Erro durante a coleta: {str(e)}")
+            self.logger.error(f"Erro ao configurar navegador: {str(e)}")
             return None
+
+    def _rolar_pagina(self, navegador: webdriver.Chrome) -> None:
+        try:
+            altura_total = navegador.execute_script("return document.body.scrollHeight")
+            altura_atual = 0
+            passo = altura_total / 4
+            
+            for _ in range(4):
+                altura_atual += passo
+                navegador.execute_script(f"window.scrollTo(0, {altura_atual});")
+                time.sleep(random.uniform(0.5, 1.0))
+                
+            navegador.execute_script(f"window.scrollTo(0, {altura_total - 200});")
+            time.sleep(1)
+        except Exception as e:
+            self.logger.error(f"Erro ao rolar página: {str(e)}")
 
     def _extrair_dados_html(self, html: str) -> List[Dict]:
         soup = BeautifulSoup(html, 'html.parser')
@@ -165,7 +184,6 @@ class ImoveisScraper:
                 else:
                     link = "Não informado"
                 
-                # Converter valores numéricos
                 preco_decimal = self._converter_preco(preco)
                 area_decimal = self._converter_area(area)
                 
@@ -203,6 +221,59 @@ class ImoveisScraper:
             return float(valor)
         except:
             return 0.0
+
+    def coletar_dados(self, num_paginas: int = 1) -> Optional[pd.DataFrame]:
+        navegador = None
+        dados_total = []
+        status = st.empty()
+        progress_bar = st.progress(0)
+        
+        try:
+            navegador = self._configurar_navegador()
+            if not navegador:
+                st.error("Não foi possível inicializar o navegador")
+                return None
+
+            for pagina in range(num_paginas):
+                status.text(f"⏳ Processando página {pagina + 1}/{num_paginas}")
+                progress_bar.progress((pagina + 1) / num_paginas)
+                
+                url = f"https://www.imovelweb.com.br/terrenos-venda-eusebio-ce{'-pagina-' + str(pagina + 1) if pagina > 0 else ''}.html"
+                
+                try:
+                    navegador.get(url)
+                    time.sleep(self.config.espera_carregamento)
+                    
+                    self._rolar_pagina(navegador)
+                    
+                    espera = WebDriverWait(navegador, self.config.tempo_espera)
+                    espera.until(EC.presence_of_element_located((By.CSS_SELECTOR, 'div[data-qa="posting PROPERTY"]')))
+                    
+                    dados_pagina = self._extrair_dados_html(navegador.page_source)
+                    if dados_pagina:
+                        dados_total.extend(dados_pagina)
+                        
+                except Exception as e:
+                    self.logger.error(f"Erro na página {pagina + 1}: {str(e)}")
+                    continue
+                
+                time.sleep(random.uniform(3, 6))
+            
+            if dados_total:
+                return pd.DataFrame(dados_total)
+            return None
+            
+        except Exception as e:
+            self.logger.error(f"Erro crítico: {str(e)}")
+            st.error(f"Erro durante a coleta: {str(e)}")
+            return None
+            
+        finally:
+            if navegador:
+                try:
+                    navegador.quit()
+                except Exception as e:
+                    self.logger.error(f"Erro ao fechar navegador: {str(e)}")
 
 def main():
     st.title('🏠 Coletor de Dados Imobiliários - Eusébio')
@@ -250,8 +321,18 @@ def main():
                     db = SupabaseManager()
                     registros_inseridos = db.inserir_dados(df)
                     st.success(f'✅ {registros_inseridos} registros inseridos com sucesso!')
+                    st.balloons()
                 except Exception as e:
                     st.error(f'Erro ao salvar no Supabase: {str(e)}')
+            
+            # Botão para download dos dados
+            csv = df.to_csv(index=False).encode('utf-8-sig')
+            st.download_button(
+                label="📥 Baixar CSV",
+                data=csv,
+                file_name=f'terrenos_eusebio_{datetime.now().strftime("%Y%m%d")}.csv',
+                mime='text/csv',
+            )
 
 if __name__ == "__main__":
     main()
