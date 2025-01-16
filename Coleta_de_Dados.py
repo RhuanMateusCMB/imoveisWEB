@@ -101,6 +101,9 @@ class ImoveisScraper:
 
     def _configurar_navegador(self) -> webdriver.Chrome:
         try:
+            from webdriver_manager.chrome import ChromeDriverManager
+            from selenium.webdriver.chrome.service import Service
+            
             opcoes_chrome = Options()
             opcoes_chrome.add_argument('--headless=new')
             opcoes_chrome.add_argument('--no-sandbox')
@@ -120,7 +123,8 @@ class ImoveisScraper:
             opcoes_chrome.add_argument('--disable-extensions')
             opcoes_chrome.add_argument('--disable-gpu')
             
-            service = Service("/usr/bin/chromedriver")
+            # Usar webdriver_manager para gerenciar o ChromeDriver
+            service = Service(ChromeDriverManager().install())
             navegador = webdriver.Chrome(service=service, options=opcoes_chrome)
             
             # Configurações adicionais para evitar detecção
@@ -134,6 +138,7 @@ class ImoveisScraper:
             return navegador
         except Exception as e:
             self.logger.error(f"Erro ao configurar navegador: {str(e)}")
+            st.error(f"Erro ao configurar navegador: {str(e)}")
             return None
 
     def _rolar_pagina(self, navegador: webdriver.Chrome) -> None:
