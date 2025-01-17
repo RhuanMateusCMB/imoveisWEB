@@ -1,19 +1,25 @@
 import streamlit as st
 import pandas as pd
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 import time
 import random
 from datetime import datetime
 import logging
 from typing import Optional, List, Dict
 from dataclasses import dataclass
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from bs4 import BeautifulSoup
 from supabase import create_client
+
+# Configuração da página Streamlit
+st.set_page_config(
+    page_title="CMB - Capital",
+    page_icon="🏗️",
+    layout="wide"
+)
 
 @dataclass
 class ConfiguracaoScraper:
@@ -23,67 +29,26 @@ class ConfiguracaoScraper:
     url_base: str = "https://www.imovelweb.com.br/terrenos-venda-eusebio-ce.html"
     tentativas_max: int = 3
 
-# Configuração da página Streamlit
-st.set_page_config(
-    page_title="Coletor de Dados Imobiliários",
-    page_icon="🏗️",
-    layout="wide"
-)
-
 class SupabaseManager:
     def __init__(self):
         self.url = st.secrets["SUPABASE_URL"]
         self.key = st.secrets["SUPABASE_KEY"]
         self.supabase = create_client(self.url, self.key)
 
-    def inserir_dados(self, df):
-        try:
-            registros = []
-            for _, row in df.iterrows():
-                dados_validados = {
-                    'cardID': str(row['cardid']),
-                    'preco_Real': float(row['preco_real']),
-                    'endereco': str(row['endereco']),
-                    'localidade': str(row['localidade']),
-                    'area_m2': float(row['area_m2']),
-                    'link': str(row['link'])
-                }
-                registros.append(dados_validados)
-            
-            if registros:
-                self.supabase.table('imoveisweb').insert(registros).execute()
-            return len(registros)
-        except Exception as e:
-            st.error(f"Erro ao inserir dados: {str(e)}")
-            return 0
+    def limpar_tabela(self):
+        self.supabase.table('imoveisweb').delete().neq('id', 0).execute()
 
-# Estilo CSS simplificado
-st.markdown("""
-    <style>
-    .stButton>button {
-        width: 100%;
-        height: 3em;
-        font-size: 20px;
-    }
-    .main .block-container {
-        padding-top: 2rem;
-        padding-bottom: 2rem;
-    }
-    /* Estilo para botão de submit */
-    .stButton>button {
-        background-color: #FF4B4B !important;
-        color: white !important;
-        border: none !important;
-        padding: 0.5rem 1rem !important;
-        border-radius: 5px !important;
-        transition: all 0.3s ease !important;
-    }
-    .stButton>button:hover {
-        background-color: #FF3333 !important;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2) !important;
-    }
-    </style>
-    """, unsafe_allow_html=True)
+    def inserir_dados(self, df):
+        # Primeiro, pegamos o maior ID atual na tabela
+        result = self.supabase.table('imoveisweb').select('id').order('id.desc').limit(1).execute()
+        ultimo_id = result.data[0]['id'] if result.data else 0
+        
+        # Ajustamos os IDs do novo dataframe
+        df['id'] = range(ultimo_id + 1, ultimo_id + len(df) + 1)
+        
+        # Inserimos os dados
+        registros = df.to_dict('records')
+        self.supabase.table('imoveisweb').insert(registros).execute()
 
 class ScraperImovelWeb:
     def __init__(self, config: ConfiguracaoScraper):
@@ -118,137 +83,127 @@ class ScraperImovelWeb:
             
             user_agent = self._get_random_user_agent()
             opcoes_chrome.add_argument(f'--user-agent={user_agent}')
-            opcoes_chrome.add_argument('--accept-language=pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7')
             
             service = Service("/usr/bin/chromedriver")
             navegador = webdriver.Chrome(service=service, options=opcoes_chrome)
-            
-            navegador.execute_cdp_cmd('Network.setUserAgentOverride', {
-                "userAgent": user_agent,
-                "platform": "Windows NT 10.0; Win64; x64"
-            })
-            
-            navegador.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
             
             return navegador
         except Exception as e:
             self.logger.error(f"Erro ao configurar navegador: {str(e)}")
             return None
 
-    def _rolar_pagina(self, navegador: webdriver.Chrome) -> None:
+    def _extrair_dados_imovel(self, imovel: webdriver.remote.webelement.WebElement,
+                            id_global: int) -> Optional[Dict]:
         try:
-            altura_total = navegador.execute_script("return document.body.scrollHeight")
-            altura_atual = 0
-            passo = altura_total / 4
+            # Extrair data-id
+            card_id = imovel.get_attribute('data-id')
             
-            for _ in range(4):
-                altura_atual += passo
-                navegador.execute_script(f"window.scrollTo(0, {altura_atual});")
-                time.sleep(random.uniform(0.5, 1.0))
-                
-            navegador.execute_script(f"window.scrollTo(0, {altura_total - 200});")
-            time.sleep(1)
-        except Exception as e:
-            self.logger.error(f"Erro ao rolar página: {str(e)}")
-
-    def _extrair_dados_html(self, html: str) -> List[Dict]:
-        soup = BeautifulSoup(html, 'html.parser')
-        dados = []
-        
-        cards = soup.find_all('div', {'data-qa': 'posting PROPERTY'})
-        
-        for card in cards:
+            # Extrair preço
             try:
-                container = card.find('div', class_='postingCardLayout-module__posting-card-container__G_UsJ')
-                if not container:
-                    continue
-                
-                card_id = card.get('data-id')
-                
-                preco_elem = container.find('div', {'data-qa': 'POSTING_CARD_PRICE'})
-                preco = preco_elem.text.strip() if preco_elem else "0"
-                
-                endereco_elem = container.find('div', class_='postingLocations-module__location-address__k8Ip7')
-                endereco = endereco_elem.text.strip() if endereco_elem else "Não informado"
-                
-                localidade_elem = container.find('h2', {'data-qa': 'POSTING_CARD_LOCATION'})
-                localidade = localidade_elem.text.strip() if localidade_elem else "Não informado"
-                
-                area_elem = container.find('span', class_='postingMainFeatures-module__posting-main-features-span__ror2o')
-                area = area_elem.text.strip() if area_elem else "0"
-                
-                link = card.get('data-to-posting')
-                if link:
-                    link = f"https://www.imovelweb.com.br{link}"
-                else:
-                    link = "Não informado"
-                
-                dados.append({
-                    'cardid': card_id,
-                    'preco_real': self._converter_preco(preco),
-                    'endereco': endereco,
-                    'localidade': localidade,
-                    'area_m2': self._converter_area(area),
-                    'link': link,
-                    'data_coleta': datetime.now().strftime("%Y-%m-%d")
-                })
-                
-            except Exception as e:
-                self.logger.error(f"Erro ao extrair dados do card: {str(e)}")
-                continue
-                
-        return dados
+                preco_elemento = imovel.find_element(By.CSS_SELECTOR, 'div[data-qa="POSTING_CARD_PRICE"]')
+                preco_texto = preco_elemento.text.replace('R$', '').replace('.', '').replace(',', '.').strip()
+                preco = float(preco_texto)
+            except Exception:
+                return None
+            
+            # Extrair área
+            try:
+                area_elemento = imovel.find_element(By.CSS_SELECTOR, 'span[class*="posting-main-features"]')
+                area_texto = area_elemento.text.replace('m² tot.', '').strip()
+                area = float(area_texto)
+            except Exception:
+                return None
+            
+            # Extrair endereço e localidade
+            try:
+                endereco = imovel.find_element(By.CSS_SELECTOR, 'div[class*="location-address"]').text
+                localidade = imovel.find_element(By.CSS_SELECTOR, 'h2[class*="location-text"]').text
+            except Exception:
+                endereco = "Endereço não disponível"
+                localidade = "Localidade não disponível"
 
-    def _converter_preco(self, valor: str) -> float:
-        try:
-            if isinstance(valor, str):
-                valor_limpo = valor.replace('R$ ', '').replace('.', '').replace(',', '.')
-                return float(valor_limpo)
-            return float(valor)
-        except:
-            return 0.0
+            # Extrair link
+            try:
+                link = imovel.find_element(By.CSS_SELECTOR, 'a[data-qa="POSTING_CARD_LINK"]').get_attribute('href')
+            except Exception:
+                link = """, unsafe_allow_html=True)
 
-    def _converter_area(self, valor: str) -> float:
+    except Exception as e:
+        st.error(f"❌ Erro inesperado: {str(e)}")
+        st.error("Por favor, atualize a página e tente novamente.")
+
+if __name__ == "__main__":
+    main()
+
+            return {
+                'id': id_global,
+                'cardID': card_id,
+                'endereco': endereco,
+                'localidade': localidade,
+                'area_m2': area,
+                'preco_real': preco,
+                'link': link,
+                'created_at': datetime.now().isoformat(),
+                'updated_at': datetime.now().isoformat()
+            }
+
+        except Exception as e:
+            self.logger.error(f"Erro ao extrair dados: {str(e)}")
+            return None
+
+    def _encontrar_botao_proxima(self, navegador: webdriver.Chrome) -> Optional[webdriver.remote.webelement.WebElement]:
         try:
-            if isinstance(valor, str):
-                valor_numerico = ''.join(filter(str.isdigit, valor))
-                return float(valor_numerico) if valor_numerico else 0.0
-            return float(valor)
+            return navegador.find_element(By.CSS_SELECTOR, 'a[title="Próxima"]')
         except:
-            return 0.0
+            return None
 
     def coletar_dados(self, num_paginas: int = 9) -> Optional[pd.DataFrame]:
         navegador = None
         todos_dados: List[Dict] = []
+        id_global = 0
         progresso = st.progress(0)
         status = st.empty()
     
         try:
+            self.logger.info("Iniciando coleta de dados...")
             navegador = self._configurar_navegador()
             if navegador is None:
                 st.error("Não foi possível inicializar o navegador")
                 return None
-
-            for pagina in range(num_paginas):
+    
+            navegador.get(self.config.url_base)
+            self.logger.info("Navegador acessou a URL com sucesso")
+            
+            for pagina in range(1, num_paginas + 1):
                 try:
-                    status.text(f"⏳ Processando página {pagina + 1}/{num_paginas}")
-                    progresso.progress((pagina + 1) / num_paginas)
+                    status.text(f"⏳ Processando página {pagina}/{num_paginas}")
+                    progresso.progress(pagina / num_paginas)
+                    self.logger.info(f"Processando página {pagina}")
                     
-                    url = f"{self.config.url_base[:-5]}{'-pagina-' + str(pagina + 1) if pagina > 0 else ''}.html"
-                    navegador.get(url)
-                    time.sleep(self.config.espera_carregamento)
+                    time.sleep(random.uniform(2, 4))
+
+                    # Encontrar todos os cards de imóveis
+                    imoveis = navegador.find_elements(By.CSS_SELECTOR, 'div[data-qa="POSTING PROPERTY"]')
                     
-                    self._rolar_pagina(navegador)
-                    
-                    dados_pagina = self._extrair_dados_html(navegador.page_source)
-                    if dados_pagina:
-                        todos_dados.extend(dados_pagina)
-                        
+                    if not imoveis:
+                        self.logger.warning(f"Sem imóveis na página {pagina}")
+                        break
+
+                    for imovel in imoveis:
+                        id_global += 1
+                        if dados := self._extrair_dados_imovel(imovel, id_global):
+                            todos_dados.append(dados)
+
+                    if pagina < num_paginas:
+                        botao_proxima = self._encontrar_botao_proxima(navegador)
+                        if not botao_proxima:
+                            break
+                        navegador.execute_script("arguments[0].click();", botao_proxima)
+                        time.sleep(2)
+
                 except Exception as e:
-                    self.logger.error(f"Erro na página {pagina + 1}: {str(e)}")
+                    self.logger.error(f"Erro na página {pagina}: {str(e)}")
                     continue
-                
-                time.sleep(random.uniform(2, 4))
 
             return pd.DataFrame(todos_dados) if todos_dados else None
 
@@ -266,48 +221,44 @@ class ScraperImovelWeb:
 
 def main():
     try:
-        if 'df' not in st.session_state:
-            st.session_state.df = None
-        if 'dados_salvos' not in st.session_state:
-            st.session_state.dados_salvos = False
-            
-        st.title("🏗️ Coleta Informações Gerais Terrenos - Eusebio, CE")
+        # Títulos e descrição
+        st.title("🏗️ Coleta Informações Gerais Terrenos - Eusébio, CE")
         
         st.markdown("""
         <div style='text-align: center; padding: 1rem 0;'>
             <p style='font-size: 1.2em; color: #666;'>
-                Coleta de dados de terrenos à venda em Eusébio, Ceará - ImovelWeb
+                Coleta de dados de terrenos à venda em Eusébio, Ceará
             </p>
         </div>
         """, unsafe_allow_html=True)
         
+        # Informações sobre a coleta
         st.info("""
         ℹ️ **Informações sobre a coleta:**
-        - Serão coletadas até 9 páginas de resultados
+        - Digite o número de páginas que deseja coletar (máximo 9)
         - Apenas terrenos em Eusébio/CE
-        - Os dados podem ser baixados em formato CSV
+        - Após a coleta, você pode escolher se deseja salvar os dados no banco
         """)
+
+        # Input para número de páginas
+        num_paginas = st.number_input("Número de páginas para coletar", min_value=1, max_value=9, value=5)
         
+        # Separador visual
         st.markdown("<hr>", unsafe_allow_html=True)
         
-        num_paginas = st.slider(
-            'Selecione o número de páginas para análise',
-            min_value=1,
-            max_value=9,
-            value=1,
-            help='Quanto mais páginas, mais dados serão coletados'
-        )
-        
+        # Botão centralizado
         if st.button("🚀 Iniciar Coleta", type="primary", use_container_width=True):
-            st.session_state.dados_salvos = False
+            st.session_state.dados_salvos = False  # Reset estado de salvamento
             with st.spinner("Iniciando coleta de dados..."):
                 config = ConfiguracaoScraper()
                 scraper = ScraperImovelWeb(config)
                 st.session_state.df = scraper.coletar_dados(num_paginas)
                 
-        if st.session_state.df is not None and not st.session_state.df.empty:
+        # Se temos dados coletados
+        if hasattr(st.session_state, 'df') and st.session_state.df is not None and not st.session_state.df.empty:
             df = st.session_state.df
             
+            # Métricas principais
             col1, col2, col3 = st.columns(3)
             with col1:
                 st.metric("Total de Imóveis", len(df))
@@ -320,6 +271,7 @@ def main():
             
             st.success("✅ Dados coletados com sucesso!")
             
+            # Exibição dos dados
             st.markdown("### 📊 Dados Coletados")
             st.dataframe(
                 df.style.format({
@@ -329,7 +281,8 @@ def main():
                 use_container_width=True
             )
             
-            if not st.session_state.dados_salvos:
+            # Confirmação para salvar no banco
+            if not hasattr(st.session_state, 'dados_salvos') or not st.session_state.dados_salvos:
                 st.markdown("### 💾 Salvar no Banco de Dados")
                 col1, col2 = st.columns(2)
                 
@@ -338,13 +291,10 @@ def main():
                         try:
                             with st.spinner("💾 Salvando dados no banco..."):
                                 db = SupabaseManager()
-                                registros_inseridos = db.inserir_dados(df)
-                                if registros_inseridos > 0:
-                                    st.session_state.dados_salvos = True
-                                    st.success(f"✅ {registros_inseridos} registros salvos no banco de dados!")
-                                    st.balloons()
-                                else:
-                                    st.warning("Nenhum registro foi salvo no banco de dados.")
+                                db.inserir_dados(df)
+                                st.session_state.dados_salvos = True
+                                st.success("✅ Dados salvos no banco de dados!")
+                                st.balloons()
                         except Exception as e:
                             st.error(f"❌ Erro ao salvar no banco de dados: {str(e)}")
                 
@@ -352,18 +302,20 @@ def main():
                     if st.button("❌ Não salvar", key='dont_save_button', use_container_width=True):
                         st.session_state.dados_salvos = True
                         st.info("📝 Dados não foram salvos no banco.")
-
+            
+            # Botão de download
             csv = df.to_csv(index=False).encode('utf-8-sig')
             st.download_button(
                 label="📥 Baixar dados em CSV",
                 data=csv,
-                file_name=f'terrenos_eusebio_imovelweb_{datetime.now().strftime("%Y%m%d")}.csv',
+                file_name=f'terrenos_eusebio_{datetime.now().strftime("%Y%m%d")}.csv',
                 mime='text/csv',
             )
             
-            if st.session_state.dados_salvos:
+            if hasattr(st.session_state, 'dados_salvos') and st.session_state.dados_salvos:
                 st.info("🔄 Para iniciar uma nova coleta, atualize a página.")
                 
+        # Rodapé
         st.markdown("<hr>", unsafe_allow_html=True)
         st.markdown("""
             <div style='text-align: center; padding: 1rem 0; color: #666;'>
@@ -371,7 +323,7 @@ def main():
                 <p style='font-size: 0.8em;'>Última atualização: Janeiro 2025</p>
             </div>
         """, unsafe_allow_html=True)
-
+        
     except Exception as e:
         st.error(f"❌ Erro inesperado: {str(e)}")
         st.error("Por favor, atualize a página e tente novamente.")
