@@ -68,30 +68,57 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-def configurar_driver():
-    """Configura o Chrome WebDriver com opções avançadas para evitar detecção"""
+def configurar_driver(self) -> webdriver.Chrome:
     try:
-        options = uc.ChromeOptions()
-        options.add_argument('--headless')
-        options.add_argument('--disable-gpu')
-        options.add_argument('--no-sandbox')
-        options.add_argument('--disable-dev-shm-usage')
-        options.add_argument('--window-size=1920,1080')
-        options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+        opcoes_chrome = Options()
+        opcoes_chrome.add_argument('--headless=new')
+        opcoes_chrome.add_argument('--no-sandbox')
+        opcoes_chrome.add_argument('--disable-dev-shm-usage')
+        opcoes_chrome.add_argument('--window-size=1920,1080')
+        opcoes_chrome.add_argument('--disable-blink-features=AutomationControlled')
+        opcoes_chrome.add_argument('--enable-javascript')
         
-        return uc.Chrome(options=options)
+        # Headers mais realistas
+        user_agent = self._get_random_user_agent()
+        opcoes_chrome.add_argument(f'--user-agent={user_agent}')
+        opcoes_chrome.add_argument('--accept-language=pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7')
+        opcoes_chrome.add_argument('--accept=text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8')
+        
+        # Configurações adicionais
+        opcoes_chrome.add_argument('--disable-notifications')
+        opcoes_chrome.add_argument('--disable-popup-blocking')
+        opcoes_chrome.add_argument('--disable-extensions')
+        opcoes_chrome.add_argument('--disable-gpu')
+        
+        try:
+            service = Service("/usr/bin/chromedriver")
+            navegador = webdriver.Chrome(service=service, options=opcoes_chrome)
+        except Exception as service_error:
+            st.error(f"Erro ao inicializar o serviço do ChromeDriver: {service_error}")
+            return None
+        
+        try:
+            # Configurações adicionais para evitar detecção
+            navegador.execute_cdp_cmd('Network.setUserAgentOverride', {
+                "userAgent": user_agent,
+                "platform": "Windows NT 10.0; Win64; x64"
+            })
+            
+            # Adicionar propriedades ao objeto navigator
+            navegador.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            navegador.execute_script("Object.defineProperty(navigator, 'languages', {get: () => ['pt-BR', 'pt']})")
+            navegador.execute_script("Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]})")
+        
+        except Exception as config_error:
+            st.error(f"Erro ao configurar propriedades do navegador: {config_error}")
+            navegador.quit()
+            return None
+        
+        return navegador
+    
     except Exception as e:
-        st.warning("Usando configuração alternativa do ChromeDriver...")
-        chrome_options = Options()
-        chrome_options.add_argument('--headless')
-        chrome_options.add_argument('--no-sandbox')
-        chrome_options.add_argument('--disable-dev-shm-usage')
-        chrome_options.add_argument('--disable-gpu')
-        chrome_options.add_argument('--window-size=1920,1080')
-        chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
-        
-        service = Service(ChromeDriverManager().install())
-        return webdriver.Chrome(service=service, options=chrome_options)
+        self.logger.error(f"Erro inesperado ao configurar navegador: {str(e)}")
+        return None
 
 def converter_preco(valor):
     """Converte string de preço para float"""
