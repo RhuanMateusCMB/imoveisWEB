@@ -1,7 +1,9 @@
-streamlit==1.28.0
-pandas==2.1.1
-selenium==4.15.2
-supabase==1.0.3
-python-dotenv==1.0.0
-webdriver-manager==4.0.0
+streamlit==1.29.0
+pandas==2.2.0
+selenium==4.16.1
+webdriver-manager==4.0.1
+supabase==2.1.0
+beautifulsoup4==4.12.3
+undetected-chromedriver==3.5.3
 requests==2.31.0
+python-dotenv==1.0.0
