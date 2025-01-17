@@ -90,7 +90,7 @@ class ScraperImovelWeb:
             
             # Extrair preço
             try:
-                preco_elemento = imovel.find_element(By.CSS_SELECTOR, 'div[data-qa="POSTING_CARD_PRICE"]')
+                preco_elemento = imovel.find_element(By.CSS_SELECTOR, 'div.postingPrices-module__price__fqpP5')
                 preco_texto = preco_elemento.text.replace('R$', '').replace('.', '').replace(',', '.').strip()
                 preco = float(preco_texto)
             except Exception:
@@ -98,7 +98,7 @@ class ScraperImovelWeb:
             
             # Extrair área
             try:
-                area_elemento = imovel.find_element(By.CSS_SELECTOR, 'span[class*="posting-main-features"]')
+                area_elemento = imovel.find_element(By.CSS_SELECTOR, 'span.postingMainFeatures-module__posting-main-features-span__ror2o')
                 area_texto = area_elemento.text.replace('m² tot.', '').strip()
                 area = float(area_texto)
             except Exception:
@@ -106,18 +106,18 @@ class ScraperImovelWeb:
             
             # Extrair endereço e localidade
             try:
-                endereco = imovel.find_element(By.CSS_SELECTOR, 'div[class*="location-address"]').text
-                localidade = imovel.find_element(By.CSS_SELECTOR, 'h2[class*="location-text"]').text
+                endereco = imovel.find_element(By.CSS_SELECTOR, 'div.postingLocations-module__location-address__k8Ip7').text
+                localidade = imovel.find_element(By.CSS_SELECTOR, 'h2.postingLocations-module__location-text__Y9QrY').text
             except Exception:
                 endereco = "Endereço não disponível"
                 localidade = "Localidade não disponível"
-
+    
             # Extrair link
             try:
-                link = imovel.find_element(By.CSS_SELECTOR, 'a').get_attribute('href')
+                link = imovel.find_element(By.CSS_SELECTOR, 'a[href*="/propriedades/"]').get_attribute('href')
             except Exception:
                 link = ""
-
+    
             return {
                 'cardID': card_id,
                 'endereco': endereco,
@@ -126,7 +126,7 @@ class ScraperImovelWeb:
                 'preco_real': preco,
                 'link': link
             }
-
+    
         except Exception as e:
             self.logger.error(f"Erro ao extrair dados: {str(e)}")
             return None
