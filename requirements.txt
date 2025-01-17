@@ -5,3 +5,5 @@ webdriver-manager==4.0.1
 supabase==2.1.0
 python-dotenv==1.0.0
 requests
+beautifulsoup4
+undetected-chromedriver
