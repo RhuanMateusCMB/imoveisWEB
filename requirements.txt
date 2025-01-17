@@ -1,9 +1,7 @@
-streamlit==1.31.0
-pandas==2.1.4
-selenium==4.16.0
-beautifulsoup4==4.12.2
-webdriver-manager==4.0.1
-supabase==1.2.0
+streamlit==1.28.0
+pandas==2.1.1
+selenium==4.15.2
+supabase==1.0.3
 python-dotenv==1.0.0
-lxml==4.9.3
-chromedriver-autoinstaller==0.6.2
+webdriver-manager==4.0.0
+requests==2.31.0
