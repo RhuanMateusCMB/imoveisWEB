@@ -12,6 +12,8 @@ import logging
 from typing import Optional, List, Dict
 from dataclasses import dataclass
 from supabase import create_client
+from bs4 import BeautifulSoup
+import re
 
 # Configuração da página Streamlit
 st.set_page_config(
@@ -83,41 +85,39 @@ class ScraperImovelWeb:
             self.logger.error(f"Erro ao configurar navegador: {str(e)}")
             return None
 
-    def _extrair_dados_imovel(self, imovel: webdriver.remote.webelement.WebElement) -> Optional[Dict]:
+    def _extrair_dados_imovel(self, html):
+        """Extrai dados usando BeautifulSoup"""
+        soup = BeautifulSoup(html, 'html.parser')
+        
         try:
-            # Extrair data-id
-            card_id = imovel.get_attribute('data-id')
+            # Identificadores de elementos baseados no teste2.py
+            container = soup.find('div', {'data-qa': 'posting PROPERTY'})
             
-            # Extrair preço
-            try:
-                preco_elemento = imovel.find_element(By.CSS_SELECTOR, 'div.postingPrices-module__price__fqpP5')
-                preco_texto = preco_elemento.text.replace('R$', '').replace('.', '').replace(',', '.').strip()
-                preco = float(preco_texto)
-            except Exception:
-                return None
+            # Extração de dados com fallbacks
+            card_id = container.get('data-id', 'Não identificado')
             
-            # Extrair área
-            try:
-                area_elemento = imovel.find_element(By.CSS_SELECTOR, 'span.postingMainFeatures-module__posting-main-features-span__ror2o')
-                area_texto = area_elemento.text.replace('m² tot.', '').strip()
-                area = float(area_texto)
-            except Exception:
-                return None
+            # Preço
+            preco_elem = container.find('div', {'data-qa': 'POSTING_CARD_PRICE'})
+            preco = preco_elem.text.strip() if preco_elem else "0"
+            preco = self._converter_preco(preco)
             
-            # Extrair endereço e localidade
-            try:
-                endereco = imovel.find_element(By.CSS_SELECTOR, 'div.postingLocations-module__location-address__k8Ip7').text
-                localidade = imovel.find_element(By.CSS_SELECTOR, 'h2.postingLocations-module__location-text__Y9QrY').text
-            except Exception:
-                endereco = "Endereço não disponível"
-                localidade = "Localidade não disponível"
-    
-            # Extrair link
-            try:
-                link = imovel.find_element(By.CSS_SELECTOR, 'a[href*="/propriedades/"]').get_attribute('href')
-            except Exception:
-                link = ""
-    
+            # Endereço
+            endereco_elem = container.find('div', class_='postingLocations-module__location-address__k8Ip7')
+            endereco = endereco_elem.text.strip() if endereco_elem else "Endereço não disponível"
+            
+            # Localidade
+            localidade_elem = container.find('h2', {'data-qa': 'POSTING_CARD_LOCATION'})
+            localidade = localidade_elem.text.strip() if localidade_elem else "Localidade não disponível"
+            
+            # Área
+            area_elem = container.find('span', class_='postingMainFeatures-module__posting-main-features-span__ror2o')
+            area = area_elem.text.strip() if area_elem else "0"
+            area = self._converter_area(area)
+            
+            # Link
+            link_elem = container.find('a', {'data-to-posting': True})
+            link = f"https://www.imovelweb.com.br{link_elem.get('data-to-posting')}" if link_elem else ""
+            
             return {
                 'cardID': card_id,
                 'endereco': endereco,
@@ -126,10 +126,32 @@ class ScraperImovelWeb:
                 'preco_real': preco,
                 'link': link
             }
-    
+        
         except Exception as e:
             self.logger.error(f"Erro ao extrair dados: {str(e)}")
             return None
+    
+    def _converter_preco(self, valor):
+        """Converte string de preço para float"""
+        try:
+            if isinstance(valor, str):
+                # Remove 'R$ ' e converte para float
+                valor_limpo = valor.replace('R$ ', '').replace('.', '').replace(',', '.')
+                return float(valor_limpo)
+            return float(valor)
+        except:
+            return 0.0
+    
+    def _converter_area(self, valor):
+        """Extrai o número da string de área e converte para float"""
+        try:
+            if isinstance(valor, str):
+                match = re.search(r'(\d+)', valor)
+                if match:
+                    return float(match.group(1))
+            return float(valor)
+        except:
+            return 0.0
 
     def _encontrar_botao_proxima(self, navegador: webdriver.Chrome) -> Optional[webdriver.remote.webelement.WebElement]:
         try:
@@ -160,36 +182,44 @@ class ScraperImovelWeb:
                     self.logger.info(f"Processando página {pagina}")
                     
                     time.sleep(random.uniform(2, 4))
-
+    
+                    # Rolar a página para carregar elementos
+                    for i in range(10):
+                        navegador.execute_script(f"window.scrollTo(0, {i * 300});")
+                        time.sleep(0.3)
+    
                     # Encontrar todos os cards de imóveis
-                    imoveis = navegador.find_elements(By.CSS_SELECTOR, 'div[data-qa="POSTING PROPERTY"]')
+                    imoveis = navegador.find_elements(By.CSS_SELECTOR, 'div[data-qa="posting PROPERTY"]')
                     
                     if not imoveis:
                         self.logger.warning(f"Sem imóveis na página {pagina}")
                         break
-
+    
+                    # Extrair dados de cada imóvel
                     for imovel in imoveis:
-                        if dados := self._extrair_dados_imovel(imovel):
+                        html = imovel.get_attribute('outerHTML')
+                        if dados := self._extrair_dados_imovel(html):
                             todos_dados.append(dados)
-
+    
+                    # Navegar para próxima página
                     if pagina < num_paginas:
                         botao_proxima = self._encontrar_botao_proxima(navegador)
                         if not botao_proxima:
                             break
                         navegador.execute_script("arguments[0].click();", botao_proxima)
                         time.sleep(2)
-
+    
                 except Exception as e:
                     self.logger.error(f"Erro na página {pagina}: {str(e)}")
                     continue
-
+    
             return pd.DataFrame(todos_dados) if todos_dados else None
-
+    
         except Exception as e:
             self.logger.error(f"Erro crítico: {str(e)}")
             st.error(f"Erro durante a coleta: {str(e)}")
             return None
-
+    
         finally:
             if navegador:
                 try:
