@@ -8,7 +8,6 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 import time
 import random
-from datetime import datetime
 import logging
 from typing import Optional, List, Dict
 from dataclasses import dataclass
@@ -39,14 +38,6 @@ class SupabaseManager:
         self.supabase.table('imoveisweb').delete().neq('id', 0).execute()
 
     def inserir_dados(self, df):
-        # Primeiro, pegamos o maior ID atual na tabela
-        result = self.supabase.table('imoveisweb').select('id').order('id.desc').limit(1).execute()
-        ultimo_id = result.data[0]['id'] if result.data else 0
-        
-        # Ajustamos os IDs do novo dataframe
-        df['id'] = range(ultimo_id + 1, ultimo_id + len(df) + 1)
-        
-        # Inserimos os dados
         registros = df.to_dict('records')
         self.supabase.table('imoveisweb').insert(registros).execute()
 
@@ -92,8 +83,7 @@ class ScraperImovelWeb:
             self.logger.error(f"Erro ao configurar navegador: {str(e)}")
             return None
 
-    def _extrair_dados_imovel(self, imovel: webdriver.remote.webelement.WebElement,
-                            id_global: int) -> Optional[Dict]:
+    def _extrair_dados_imovel(self, imovel: webdriver.remote.webelement.WebElement) -> Optional[Dict]:
         try:
             # Extrair data-id
             card_id = imovel.get_attribute('data-id')
@@ -124,27 +114,17 @@ class ScraperImovelWeb:
 
             # Extrair link
             try:
-                link = imovel.find_element(By.CSS_SELECTOR, 'a[data-qa="POSTING_CARD_LINK"]').get_attribute('href')
+                link = imovel.find_element(By.CSS_SELECTOR, 'a').get_attribute('href')
             except Exception:
-                link = """, unsafe_allow_html=True)
-
-    except Exception as e:
-        st.error(f"❌ Erro inesperado: {str(e)}")
-        st.error("Por favor, atualize a página e tente novamente.")
-
-if __name__ == "__main__":
-    main()
+                link = ""
 
             return {
-                'id': id_global,
                 'cardID': card_id,
                 'endereco': endereco,
                 'localidade': localidade,
                 'area_m2': area,
                 'preco_real': preco,
-                'link': link,
-                'created_at': datetime.now().isoformat(),
-                'updated_at': datetime.now().isoformat()
+                'link': link
             }
 
         except Exception as e:
@@ -160,7 +140,6 @@ if __name__ == "__main__":
     def coletar_dados(self, num_paginas: int = 9) -> Optional[pd.DataFrame]:
         navegador = None
         todos_dados: List[Dict] = []
-        id_global = 0
         progresso = st.progress(0)
         status = st.empty()
     
@@ -190,8 +169,7 @@ if __name__ == "__main__":
                         break
 
                     for imovel in imoveis:
-                        id_global += 1
-                        if dados := self._extrair_dados_imovel(imovel, id_global):
+                        if dados := self._extrair_dados_imovel(imovel):
                             todos_dados.append(dados)
 
                     if pagina < num_paginas:
@@ -248,7 +226,7 @@ def main():
         
         # Botão centralizado
         if st.button("🚀 Iniciar Coleta", type="primary", use_container_width=True):
-            st.session_state.dados_salvos = False  # Reset estado de salvamento
+            st.session_state.dados_salvos = False
             with st.spinner("Iniciando coleta de dados..."):
                 config = ConfiguracaoScraper()
                 scraper = ScraperImovelWeb(config)
