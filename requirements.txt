@@ -6,4 +6,6 @@ supabase==2.1.0
 python-dotenv==1.0.0
 requests
 beautifulsoup4
-undetected-chromedriver
+setuptools
+packaging
+undetected-chromedriver==3.5.4
