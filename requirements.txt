@@ -4,8 +4,4 @@ selenium==4.15.2
 webdriver-manager==4.0.1
 supabase==2.1.0
 python-dotenv==1.0.0
-selenium-manager
-logging
-dataclasses
-typing
-hashlib
+requests
