@@ -1,310 +1,159 @@
 import streamlit as st
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
+import random
 import pandas as pd
 import time
-import random
-import re
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-from selenium.common.exceptions import TimeoutException
-from webdriver_manager.chrome import ChromeDriverManager
-import undetected_chromedriver as uc
-from bs4 import BeautifulSoup
-import traceback
+from datetime import datetime
 from supabase import create_client
-from decimal import Decimal
 
-# Configurações do Supabase
-SUPABASE_URL = st.secrets["SUPABASE_URL"]
-SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+supabase_url = "https://hcelxnzrzginhmvjalit.supabase.co"
+supabase_key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhjZWx4bnpyemdpbmhtdmphbGl0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzcwNDc2MDgsImV4cCI6MjA1MjYyMzYwOH0.qT1Gi55YjHRKk2hokqqJvgWshkwy5pKzVyRW5QpMQro"
+supabase = create_client(supabase_url, supabase_key)
 
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+def get_random_user_agent():
+   user_agents = [
+       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36'
+   ]
+   return random.choice(user_agents)
 
-# Configuração do tema e estilo da página
-st.set_page_config(
-    page_title="Coletor de Dados Imobiliários - Eusébio",
-    page_icon="🏠",
-    layout="wide",
-    initial_sidebar_state="collapsed"
-)
+def configurar_navegador():
+   opcoes_chrome = Options()
+   opcoes_chrome.add_argument('--headless=new')
+   opcoes_chrome.add_argument('--no-sandbox')
+   opcoes_chrome.add_argument('--disable-dev-shm-usage')
+   opcoes_chrome.add_argument('--window-size=1920,1080')
+   opcoes_chrome.add_argument('--disable-blink-features=AutomationControlled')
+   opcoes_chrome.add_argument('--enable-javascript')
+   
+   user_agent = get_random_user_agent()
+   opcoes_chrome.add_argument(f'--user-agent={user_agent}')
+   opcoes_chrome.add_argument('--accept-language=pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7')
+   
+   opcoes_chrome.add_argument('--disable-notifications')
+   opcoes_chrome.add_argument('--disable-popup-blocking')
+   opcoes_chrome.add_argument('--disable-extensions')
+   opcoes_chrome.add_argument('--disable-gpu')
+   
+   service = Service(ChromeDriverManager().install())
+   navegador = webdriver.Chrome(service=service, options=opcoes_chrome)
+   
+   navegador.execute_cdp_cmd('Network.setUserAgentOverride', {
+       "userAgent": user_agent,
+       "platform": "Windows NT 10.0; Win64; x64"
+   })
+   
+   navegador.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+   navegador.execute_script("Object.defineProperty(navigator, 'languages', {get: () => ['pt-BR', 'pt']})")
+   navegador.execute_script("Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]})")
+   
+   return navegador
 
-# Aplicar CSS customizado
-st.markdown("""
-    <style>
-        .main {
-            padding: 2rem;
-        }
-        .stProgress > div > div > div > div {
-            background-color: #00a6ed;
-        }
-        .stButton > button {
-            background-color: #00a6ed;
-            color: white;
-            border-radius: 5px;
-            padding: 0.5rem 2rem;
-            font-weight: 500;
-        }
-        .stButton > button:hover {
-            background-color: #0090d1;
-        }
-        .status-container {
-            background-color: #f0f2f6;
-            padding: 1rem;
-            border-radius: 5px;
-            margin: 1rem 0;
-        }
-        .success-message {
-            color: #28a745;
-            padding: 1rem;
-            border-radius: 5px;
-            margin-top: 1rem;
-        }
-        .error-message {
-            color: #dc3545;
-            padding: 1rem;
-            border-radius: 5px;
-            margin-top: 1rem;
-        }
-    </style>
-""", unsafe_allow_html=True)
-
-def configurar_driver(self) -> webdriver.Chrome:
+def converter_preco(preco_str):
     try:
-        opcoes_chrome = Options()
-        opcoes_chrome.add_argument('--headless=new')
-        opcoes_chrome.add_argument('--no-sandbox')
-        opcoes_chrome.add_argument('--disable-dev-shm-usage')
-        opcoes_chrome.add_argument('--window-size=1920,1080')
-        opcoes_chrome.add_argument('--disable-blink-features=AutomationControlled')
-        opcoes_chrome.add_argument('--enable-javascript')
-        
-        # Headers mais realistas
-        user_agent = self._get_random_user_agent()
-        opcoes_chrome.add_argument(f'--user-agent={user_agent}')
-        opcoes_chrome.add_argument('--accept-language=pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7')
-        opcoes_chrome.add_argument('--accept=text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8')
-        
-        # Configurações adicionais
-        opcoes_chrome.add_argument('--disable-notifications')
-        opcoes_chrome.add_argument('--disable-popup-blocking')
-        opcoes_chrome.add_argument('--disable-extensions')
-        opcoes_chrome.add_argument('--disable-gpu')
-        
-        try:
-            service = Service("/usr/bin/chromedriver")
-            navegador = webdriver.Chrome(service=service, options=opcoes_chrome)
-        except Exception as service_error:
-            st.error(f"Erro ao inicializar o serviço do ChromeDriver: {service_error}")
-            return None
-        
-        try:
-            # Configurações adicionais para evitar detecção
-            navegador.execute_cdp_cmd('Network.setUserAgentOverride', {
-                "userAgent": user_agent,
-                "platform": "Windows NT 10.0; Win64; x64"
-            })
-            
-            # Adicionar propriedades ao objeto navigator
-            navegador.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-            navegador.execute_script("Object.defineProperty(navigator, 'languages', {get: () => ['pt-BR', 'pt']})")
-            navegador.execute_script("Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]})")
-        
-        except Exception as config_error:
-            st.error(f"Erro ao configurar propriedades do navegador: {config_error}")
-            navegador.quit()
-            return None
-        
-        return navegador
-    
-    except Exception as e:
-        self.logger.error(f"Erro inesperado ao configurar navegador: {str(e)}")
+        # Remove R$ and any spaces
+        preco_limpo = preco_str.replace('R$', '').replace(' ', '')
+        # Replace dot with empty string (for thousand separator)
+        preco_numerico = float(preco_limpo.replace('.', '').replace(',', '.'))
+        return preco_numerico
+    except (ValueError, AttributeError):
         return None
 
-def converter_preco(valor):
-    """Converte string de preço para float"""
-    try:
-        if isinstance(valor, str):
-            # Remove 'R$ ' e converte para float
-            valor_limpo = valor.replace('R$ ', '').replace('.', '').replace(',', '.')
-            return float(valor_limpo)
-        return float(valor)
-    except:
-        return 0.0
-
-def converter_area(valor):
-    """Extrai o número da string de área e converte para float"""
-    try:
-        if isinstance(valor, str):
-            match = re.search(r'(\d+)', valor)
-            if match:
-                return float(match.group(1))
-        return float(valor)
-    except:
-        return 0.0
-
-def extrair_dados_html(html):
-    """Extrai dados usando BeautifulSoup"""
-    soup = BeautifulSoup(html, 'html.parser')
-    dados = []
+def extrair_dados_pagina(url):
+    todos_dados = []
+    data_coleta = datetime.now().isoformat()
     
-    cards = soup.find_all('div', {'data-qa': 'posting PROPERTY'})
+    # Busca último ID
+    result = supabase.table('imoveisweb').select('id').order('id.desc').limit(1).execute()
+    ultimo_id = result.data[0]['id'] if result.data else 0
     
-    for card in cards:
+    progresso = st.progress(0)
+    status = st.empty()
+    
+    for pagina in range(1, 10):
+        driver = configurar_navegador()
         try:
-            container = card.find('div', class_='postingCardLayout-module__posting-card-container__G_UsJ')
-            if not container:
-                continue
+            status.text(f"⏳ Processando página {pagina}/9")
+            progresso.progress(pagina / 9)
             
-            card_id = card.get('data-id')
+            url_pagina = url + f'?pagina={pagina}' if pagina > 1 else url
+            driver.get(url_pagina)
             
-            preco_elem = container.find('div', {'data-qa': 'POSTING_CARD_PRICE'})
-            preco = preco_elem.text.strip() if preco_elem else "0"
-            
-            endereco_elem = container.find('div', class_='postingLocations-module__location-address__k8Ip7')
-            endereco = endereco_elem.text.strip() if endereco_elem else "Não informado"
-            
-            localidade_elem = container.find('h2', {'data-qa': 'POSTING_CARD_LOCATION'})
-            localidade = localidade_elem.text.strip() if localidade_elem else "Não informado"
-            
-            area_elem = container.find('span', class_='postingMainFeatures-module__posting-main-features-span__ror2o')
-            area = area_elem.text.strip() if area_elem else "0"
-            
-            link = card.get('data-to-posting')
-            if link:
-                link = f"https://www.imovelweb.com.br{link}"
-            else:
-                link = "Não informado"
-            
-            # Converter valores numéricos
-            preco_decimal = converter_preco(preco)
-            area_decimal = converter_area(area)
-            
-            # Preparar dados para o Supabase - Usando as chaves corretas
-            dados.append({
-                'cardid': card_id,  # Mantemos minúsculo aqui
-                'preco_real': float(preco_decimal),
-                'endereco': endereco,
-                'localidade': localidade,
-                'area_m2': float(area_decimal),
-                'link': link
-            })
-            
-        except Exception as e:
-            st.error(f"Erro ao extrair dados do card: {str(e)}")
-            continue
-            
-    return dados
-
-def inserir_dados_supabase(dados):
-    """Insere dados no Supabase"""
-    registros_inseridos = 0
-    for registro in dados:
-        try:
-            dados_validados = {
-                'cardID': str(registro['cardid']),
-                'preco_Real': float(registro['preco_real']),
-                'endereco': str(registro['endereco']),
-                'localidade': str(registro['localidade']),
-                'area_m2': float(registro['area_m2']),
-                'link': str(registro['link'])
-            }
-            supabase.table('imoveisweb').insert([dados_validados]).execute()
-            registros_inseridos += 1
-        except Exception:
-            continue
-    return registros_inseridos
-
-def coletar_dados_imoveis():
-    # Cabeçalho
-    st.title('🏠 Coletor de Dados Imobiliários - Eusébio')
-    st.markdown("""
-        <div style='margin-bottom: 2rem;'>
-            Ferramenta automatizada para coleta de dados de terrenos à venda no Eusébio-CE.
-            Os dados são atualizados em tempo real e armazenados de forma segura.
-        </div>
-    """, unsafe_allow_html=True)
-    
-    # Interface de configuração
-    with st.container():
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            num_paginas = st.slider(
-                'Selecione o número de páginas para análise',
-                min_value=1,
-                max_value=9,
-                value=1,
-                help='Quanto mais páginas, mais dados serão coletados'
+            WebDriverWait(driver, 45).until(
+                EC.presence_of_element_located((By.CLASS_NAME, "postings-container"))
             )
-        with col2:
-            iniciar_coleta = st.button('Iniciar Coleta', use_container_width=True)
-    
-    if iniciar_coleta:
-        # Container para status e progresso
-        status_container = st.container()
-        with status_container:
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            info_col1, info_col2 = st.columns(2)
             
-            with info_col1:
-                terrenos_coletados = st.empty()
-            with info_col2:
-                tempo_estimado = st.empty()
-        
-        dados_total = []
-        try:
-            # Lógica de coleta
-            for pagina in range(num_paginas):
-                status_text.markdown(f"**Status:** Coletando dados da página {pagina + 1}...")
-                
-                driver = configurar_driver()
-                url = f"https://www.imovelweb.com.br/terrenos-venda-eusebio-ce{'-pagina-' + str(pagina + 1) if pagina > 0 else ''}.html"
-                
-                driver.get(url)
-                time.sleep(3)
-                
-                for i in range(10):
-                    driver.execute_script(f"window.scrollTo(0, {i * 300});")
-                    time.sleep(0.3)
-                
-                dados_pagina = extrair_dados_html(driver.page_source)
-                if dados_pagina:
-                    dados_total.extend(dados_pagina)
-                
-                driver.quit()
-                
-                # Atualizar interface
-                progress = (pagina + 1) / num_paginas
-                progress_bar.progress(progress)
-                terrenos_coletados.metric("Terrenos Encontrados", len(dados_total))
-                tempo_estimado.metric("Página Atual", f"{pagina + 1} de {num_paginas}")
-                
-                time.sleep(random.uniform(3, 6))
+            time.sleep(5)
             
-            # Processar dados coletados
-            if dados_total:
-                status_text.markdown("**Status:** Salvando dados no banco...")
-                registros_inseridos = inserir_dados_supabase(dados_total)
-                
-                if registros_inseridos > 0:
-                    st.success(f'✅ Coleta finalizada com sucesso! {registros_inseridos} novos registros inseridos.')
+            container = driver.find_element(By.CLASS_NAME, "postings-container")
+            cards = container.find_elements(By.CLASS_NAME, "postingCardLayout-module__posting-card-layout__Lklt9")
+            
+            for card in cards:
+                try:
+                    preco_str = WebDriverWait(card, 10).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, '[data-qa="POSTING_CARD_PRICE"]'))
+                    ).text
                     
-                    # Mostrar prévia dos dados
-                    st.subheader('📊 Resumo dos Dados Coletados')
-                    df_preview = pd.DataFrame(dados_total)
-                    st.dataframe(
-                        df_preview,
-                        column_config={
-                            "preco_real": st.column_config.NumberColumn("Preço (R$)", format="R$ %.2f"),
-                            "area_m2": st.column_config.NumberColumn("Área (m²)", format="%.2f m²"),
-                        },
-                        hide_index=True
-                    )
-            else:
-                st.warning('⚠️ Nenhum dado novo encontrado para coleta.')
-                
+                    area_str = WebDriverWait(card, 10).until(
+                        EC.presence_of_element_located((By.CLASS_NAME, 'postingMainFeatures-module__posting-main-features-span__ror2o'))
+                    ).text
+                    
+                    ultimo_id += 1
+                    dados = {
+                        'id': ultimo_id,
+                        'cardID': card.get_attribute('data-id'),
+                        'preco_Real': converter_preco(preco_str),
+                        'localidade': WebDriverWait(card, 10).until(
+                            EC.presence_of_element_located((By.CSS_SELECTOR, '[data-qa="POSTING_CARD_LOCATION"]'))
+                        ).text,
+                        'endereco': card.find_element(By.CLASS_NAME, 'postingLocations-module__location-address__k8Ip7').text,
+                        'area_m2': int(area_str.split()[0]),
+                        'link': card.find_element(By.CSS_SELECTOR, 'a').get_attribute('href'),
+                        'data_coleta': data_coleta
+                    }
+                    
+                    supabase.table('imoveisweb').insert(dados).execute()
+                    todos_dados.append(dados)
+                    
+                except Exception as e:
+                    st.warning(f"Erro no card: {str(e)}")
+            
+            time.sleep(3)
+        
         except Exception as e:
-            st.error('❌ Ocorreu um erro durante a coleta. Por favor, tente novamente.')
+            st.error(f"Erro na página {pagina}: {str(e)}")
+            driver.save_screenshot(f'error_page_{pagina}.png')
+        
+        finally:
+            driver.quit()
+    
+    status.text("✅ Coleta concluída")
+    progresso.progress(1.0)
+    
+    return todos_dados
 
-if __name__ == "__main__":
-    coletar_dados_imoveis()
+
+def main():
+   st.title('Extrator de Dados - Lotes em Eusébio')
+   
+   if st.button('Iniciar Extração'):
+       with st.spinner('Extraindo...'):
+           url = 'https://www.imovelweb.com.br/terrenos-venda-eusebio-ce.html'
+           dados = extrair_dados_pagina(url)
+           
+           if dados:
+               df = pd.DataFrame(dados)
+               st.dataframe(df)
+               st.download_button('Download CSV', df.to_csv(index=False).encode('utf-8'), 'lotes_eusebio.csv')
+           else:
+               st.error('Nenhum dado extraído')
+
+if __name__ == '__main__':
+   main()
