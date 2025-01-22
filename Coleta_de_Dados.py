@@ -42,7 +42,7 @@ def configurar_navegador():
    opcoes_chrome.add_argument('--disable-extensions')
    opcoes_chrome.add_argument('--disable-gpu')
    
-   service = Service("/usr/bin/chromedriver")
+   service = Service(ChromeDriverManager().install())
    navegador = webdriver.Chrome(service=service, options=opcoes_chrome)
    
    navegador.execute_cdp_cmd('Network.setUserAgentOverride', {
