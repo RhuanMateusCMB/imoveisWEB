@@ -19,7 +19,7 @@ def get_random_user_agent():
    ]
    return random.choice(user_agents)
 
-def configurar_navegador(self) -> webdriver.Chrome:
+def configurar_navegador():
     try:
         opcoes_chrome = Options()
         opcoes_chrome.add_argument('--headless=new')
@@ -29,7 +29,7 @@ def configurar_navegador(self) -> webdriver.Chrome:
         opcoes_chrome.add_argument('--disable-blink-features=AutomationControlled')
         opcoes_chrome.add_argument('--enable-javascript')
         
-        user_agent = self._get_random_user_agent()
+        user_agent = get_random_user_agent()
         opcoes_chrome.add_argument(f'--user-agent={user_agent}')
         opcoes_chrome.add_argument('--accept-language=pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7')
         opcoes_chrome.add_argument('--accept=text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8')
@@ -53,7 +53,7 @@ def configurar_navegador(self) -> webdriver.Chrome:
         
         return navegador
     except Exception as e:
-        self.logger.error(f"Erro ao configurar navegador: {str(e)}")
+        st.error(f"Erro ao configurar navegador: {str(e)}")
         return None
 
 def converter_preco(preco_str):
