@@ -20,6 +20,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
+from selenium.common.exceptions import TimeoutException, StaleElementReferenceException, NoSuchElementException
 
 # Utilitários
 import time
@@ -29,6 +30,7 @@ import logging
 from typing import Optional, List, Dict
 from dataclasses import dataclass
 from supabase import create_client
+import backoff
 
 # Configuração da página Streamlit
 st.set_page_config(
@@ -67,11 +69,13 @@ st.markdown("""
 
 @dataclass
 class ConfiguracaoScraper:
-    tempo_espera: int = 8
-    pausa_rolagem: int = 2
-    espera_carregamento: int = 4
+    tempo_espera: int = 15
+    pausa_rolagem: int = 3
+    espera_carregamento: int = 8
     url_base: str = "https://www.imovelweb.com.br/terrenos-venda-eusebio-ce.html"
-    tentativas_max: int = 3
+    tentativas_max: int = 5
+    delay_min: float = 2.0
+    delay_max: float = 5.0
 
 class SupabaseManager:
     def __init__(self):
@@ -140,6 +144,13 @@ class ScraperImovelWeb:
     def __init__(self, config: ConfiguracaoScraper):
         self.config = config
         self.logger = self._configurar_logger()
+        self.user_agents = [
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (iPad; CPU OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1'
+        ]
 
     @staticmethod
     def _configurar_logger() -> logging.Logger:
@@ -150,12 +161,7 @@ class ScraperImovelWeb:
         return logging.getLogger(__name__)
 
     def _get_random_user_agent(self):
-        user_agents = [
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/120.0.0.0 Safari/537.36'
-        ]
-        return random.choice(user_agents)
+        return random.choice(self.user_agents)
 
     def _configurar_navegador(self) -> webdriver.Chrome:
         try:
@@ -163,94 +169,116 @@ class ScraperImovelWeb:
             opcoes_chrome.add_argument('--headless=new')
             opcoes_chrome.add_argument('--no-sandbox')
             opcoes_chrome.add_argument('--disable-dev-shm-usage')
+            opcoes_chrome.add_argument('--disable-gpu')
+            opcoes_chrome.add_argument('--disable-infobars')
             opcoes_chrome.add_argument('--window-size=1920,1080')
             opcoes_chrome.add_argument('--disable-blink-features=AutomationControlled')
+            
+            opcoes_chrome.add_experimental_option('excludeSwitches', ['enable-automation'])
+            opcoes_chrome.add_experimental_option('useAutomationExtension', False)
             
             user_agent = self._get_random_user_agent()
             opcoes_chrome.add_argument(f'--user-agent={user_agent}')
             
+            prefs = {
+                "profile.default_content_setting_values.notifications": 2,
+                "profile.managed_default_content_settings.images": 2
+            }
+            opcoes_chrome.add_experimental_option("prefs", prefs)
+            
             service = Service("/usr/bin/chromedriver")
             navegador = webdriver.Chrome(service=service, options=opcoes_chrome)
-            
+            navegador.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
+                'source': '''
+                    Object.defineProperty(navigator, 'webdriver', {
+                        get: () => undefined
+                    })
+                '''
+            })
             return navegador
         except Exception as e:
             self.logger.error(f"Erro ao configurar navegador: {str(e)}")
             return None
 
+    @backoff.on_exception(backoff.expo, Exception, max_tries=3)
     def _rolar_pagina(self, navegador: webdriver.Chrome) -> None:
         try:
             altura_total = navegador.execute_script("return document.body.scrollHeight")
             altura_atual = 0
-            passo = altura_total / 4
+            passo = altura_total / 6  # Mais passos para rolagem mais suave
             
-            for _ in range(4):
+            for _ in range(6):
                 altura_atual += passo
                 navegador.execute_script(f"window.scrollTo(0, {altura_atual});")
+                time.sleep(random.uniform(0.8, 1.5))
+                
+            # Rolar de volta ao topo aleatoriamente
+            if random.random() < 0.3:
+                navegador.execute_script("window.scrollTo(0, 0);")
                 time.sleep(random.uniform(0.5, 1.0))
         except Exception as e:
             self.logger.error(f"Erro ao rolar página: {str(e)}")
+            raise
 
+    @backoff.on_exception(backoff.expo, 
+                         (StaleElementReferenceException, TimeoutException), 
+                         max_tries=3)
     def _extrair_dados_imovel(self, imovel, id_global: int, pagina: int) -> Optional[Dict]:
         try:
-            wait = WebDriverWait(imovel, 10)
+            wait = WebDriverWait(imovel, self.config.tempo_espera)
             
-            # Extrair cardID 
+            # XPath mais robustos
+            preco_xpath = ".//div[contains(@class, 'price') or contains(@class, 'valor')]//text()[contains(., 'R$')]"
+            area_xpath = ".//div[contains(@class, 'features') or contains(@class, 'caracteristicas')]//text()[contains(., 'm²')]"
+            endereco_xpath = ".//div[contains(@class, 'location') or contains(@class, 'endereco')]"
+            
+            # Extrair cardID com fallback
             try:
-                card_id = imovel.get_attribute('data-id')
+                card_id = imovel.get_attribute('data-id') or imovel.get_attribute('id')
             except:
-                card_id = f"CARD_{id_global}"
+                card_id = f"CARD_{id_global}_{int(time.time())}"
 
-            # Extrair preço
+            # Extrair preço com retry
             try:
                 preco_elemento = wait.until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, '.postingPrices-module__price__fqpP5'))
+                    EC.presence_of_element_located((By.XPATH, preco_xpath))
                 )
                 preco_texto = preco_elemento.text
-                preco = float(preco_texto.replace('R$', '').replace('.', '').replace(',', '.').strip())
+                preco = float(''.join(filter(str.isdigit, preco_texto.replace(',', '.'))))
             except Exception as e:
                 self.logger.warning(f"Erro ao extrair preço: {e}")
                 return None
 
-            # Extrair área
+            # Extrair área com retry
             try:
                 area_elemento = wait.until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, '.postingMainFeatures-module__posting-main-features-listing__BFHHQ'))
+                    EC.presence_of_element_located((By.XPATH, area_xpath))
                 )
                 area_texto = area_elemento.text
-                area = float(area_texto.replace('m² tot.', '').replace(',', '.').strip())
+                area = float(''.join(filter(str.isdigit, area_texto.replace(',', '.'))))
             except Exception as e:
                 self.logger.warning(f"Erro ao extrair área: {e}")
                 return None
 
-            # Extrair endereço e localidade
+            # Extrair endereço e localidade com fallback
             try:
-                endereco_completo = wait.until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, '.postingLocations-module__location-text__Y9QrY'))
-                ).text
-                # O texto vem no formato "Bairro, Cidade" - vamos separar
+                endereco_elemento = wait.until(
+                    EC.presence_of_element_located((By.XPATH, endereco_xpath))
+                )
+                endereco_completo = endereco_elemento.text
                 partes = endereco_completo.split(',')
-                localidade = partes[0].strip() if len(partes) > 0 else "Não informado"
-                
-                # Tentar pegar o endereço mais detalhado se disponível
-                try:
-                    endereco_detalhado = wait.until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, '.postingLocations-module__location-address__k8Ip7'))
-                    ).text
-                    endereco = endereco_detalhado if endereco_detalhado else endereco_completo
-                except:
-                    endereco = endereco_completo
-                    
+                localidade = partes[0].strip() if partes else "Não informado"
+                endereco = endereco_completo
             except Exception as e:
                 self.logger.warning(f"Erro ao extrair endereço: {e}")
                 endereco = "Endereço não disponível"
                 localidade = "Não informado"
 
-            # Extrair link
+            # Extrair link com validação
             try:
-                desc_element = wait.until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, '.postingCard-module__posting-description__r17OH'))
-                )
-                link = desc_element.find_element(By.TAG_NAME, 'a').get_attribute('href')
+                link = imovel.find_element(By.TAG_NAME, 'a').get_attribute('href')
+                if not link.startswith('http'):
+                    link = f"https://www.imovelweb.com.br{link}"
             except Exception:
                 link = ""
 
@@ -282,37 +310,49 @@ class ScraperImovelWeb:
                 return None
 
             for pagina in range(1, num_paginas + 1):
-                try:
-                    # Navegação entre páginas usando a estrutura de URL do ImovelWeb
-                    if pagina == 1:
-                        navegador.get(self.config.url_base)
-                    else:
-                        url_pagina = f"/terrenos-venda-eusebio-ce-pagina-{pagina}.html"
-                        navegador.get(f"https://www.imovelweb.com.br{url_pagina}")
-                    
-                    status.text(f"⏳ Processando página {pagina}/{num_paginas}")
-                    progresso.progress(pagina / num_paginas)
+                for tentativa in range(self.config.tentativas_max):
+                    try:
+                        if pagina == 1:
+                            navegador.get(self.config.url_base)
+                        else:
+                            url_pagina = f"/terrenos-venda-eusebio-ce-pagina-{pagina}.html"
+                            navegador.get(f"https://www.imovelweb.com.br{url_pagina}")
+                        
+                        status.text(f"⏳ Processando página {pagina}/{num_paginas} (Tentativa {tentativa + 1})")
+                        progresso.progress(pagina / num_paginas)
 
-                    time.sleep(self.config.espera_carregamento)
-                    self._rolar_pagina(navegador)
+                        # Delay aleatório entre páginas
+                        time.sleep(random.uniform(
+                            self.config.delay_min,
+                            self.config.delay_max
+                        ))
+                        
+                        self._rolar_pagina(navegador)
 
-                    # Coleta dos imóveis da página atual
-                    imoveis = WebDriverWait(navegador, self.config.tempo_espera).until(
-                        EC.presence_of_all_elements_located(
-                            (By.CSS_SELECTOR, '.postingCardLayout-module__posting-card-layout__Lklt9')
-                        )
-                    )
+                        # Esperar elementos com retry
+                        try:
+                            imoveis = WebDriverWait(navegador, self.config.tempo_espera).until(
+                                EC.presence_of_all_elements_located((
+                                    By.CSS_SELECTOR, 
+                                    '[class*="posting-card"],[class*="imovel-card"]'
+                                ))
+                            )
+                        except TimeoutException:
+                            continue
 
-                    for imovel in imoveis:
-                        id_global += 1
-                        if dados := self._extrair_dados_imovel(imovel, id_global, pagina):
-                            todos_dados.append(dados)
+                        for imovel in imoveis:
+                            id_global += 1
+                            if dados := self._extrair_dados_imovel(imovel, id_global, pagina):
+                                todos_dados.append(dados)
+                                time.sleep(random.uniform(0.5, 1.0))
 
-                    time.sleep(random.uniform(2, 4))
-
-                except Exception as e:
-                    self.logger.error(f"Erro na página {pagina}: {str(e)}")
-                    continue
+                        break  # Sai do loop de tentativas se sucesso
+                        
+                    except Exception as e:
+                        self.logger.error(f"Erro na página {pagina} (tentativa {tentativa + 1}): {str(e)}")
+                        if tentativa == self.config.tentativas_max - 1:
+                            continue  # Vai para próxima página se todas tentativas falharem
+                        time.sleep(random.uniform(2, 4))  # Espera entre tentativas
 
             return pd.DataFrame(todos_dados) if todos_dados else None
 
