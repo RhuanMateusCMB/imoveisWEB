@@ -1,22 +1,15 @@
 import streamlit as st
-from playwright.sync_api import sync_playwright
+import requests
+from bs4 import BeautifulSoup
 import pandas as pd
+import re
 import time
-import random
-
-def get_random_user_agent():
-   user_agents = [
-       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
-       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36'
-   ]
-   return random.choice(user_agents)
 
 def converter_preco(preco_str):
     try:
-        # Remove R$ and any spaces
+        # Remove R$ e espaços
         preco_limpo = preco_str.replace('R$', '').replace(' ', '')
-        # Replace dot with empty string (for thousand separator)
+        # Substituir ponto por vazio (separador de milhar)
         preco_numerico = float(preco_limpo.replace('.', '').replace(',', '.'))
         return preco_numerico
     except (ValueError, AttributeError):
@@ -28,53 +21,49 @@ def extrair_dados_pagina(url):
     progresso = st.progress(0)
     status = st.empty()
     
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        
-        for pagina in range(1, 10):
-            try:
-                status.text(f"⏳ Processando página {pagina}/9")
-                progresso.progress(pagina / 9)
-                
-                # Construir URL da página
-                url_pagina = url + f'?pagina={pagina}' if pagina > 1 else url
-                
-                # Abrir página
-                page = browser.new_page(user_agent=get_random_user_agent())
-                page.goto(url_pagina, wait_until='networkidle')
-                
-                # Esperar pelo container de postagens
-                page.wait_for_selector('.postings-container', timeout=45000)
-                
-                # Encontrar todos os cards de postagem
-                cards = page.query_selector_all('.postingCardLayout-module__posting-card-layout__Lklt9')
-                
-                for card in cards:
-                    try:
-                        # Extrair dados de cada card
-                        dados = {
-                            'card_id': card.get_attribute('data-id'),
-                            'preco': converter_preco(card.query_selector('[data-qa="POSTING_CARD_PRICE"]').inner_text()),
-                            'localizacao': card.query_selector('[data-qa="POSTING_CARD_LOCATION"]').inner_text(),
-                            'endereco': card.query_selector('.postingLocations-module__location-address__k8Ip7').inner_text(),
-                            'area': int(card.query_selector('.postingMainFeatures-module__posting-main-features-span__ror2o').inner_text().split()[0]),
-                            'link': card.query_selector('a').get_attribute('href')
-                        }
-                        todos_dados.append(dados)
-                    except Exception as e:
-                        st.warning(f"Erro no card: {str(e)}")
-                
-                # Tempo entre requisições para evitar bloqueio
-                time.sleep(3)
-                
-                # Fechar página
-                page.close()
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7'
+    }
+    
+    for pagina in range(1, 10):
+        try:
+            status.text(f"⏳ Processando página {pagina}/9")
+            progresso.progress(pagina / 9)
             
-            except Exception as e:
-                st.error(f"Erro na página {pagina}: {str(e)}")
+            # Construir URL da página
+            url_pagina = url + f'?pagina={pagina}' if pagina > 1 else url
+            
+            # Fazer requisição
+            resposta = requests.get(url_pagina, headers=headers)
+            resposta.raise_for_status()
+            
+            # Parsear HTML
+            soup = BeautifulSoup(resposta.text, 'html.parser')
+            
+            # Encontrar cards de postagem
+            cards = soup.find_all('div', class_='postingCardLayout-module__posting-card-layout__Lklt9')
+            
+            for card in cards:
+                try:
+                    # Extrair dados de cada card
+                    dados = {
+                        'card_id': card.get('data-id'),
+                        'preco': converter_preco(card.select_one('[data-qa="POSTING_CARD_PRICE"]').text.strip()),
+                        'localizacao': card.select_one('[data-qa="POSTING_CARD_LOCATION"]').text.strip(),
+                        'endereco': card.select_one('.postingLocations-module__location-address__k8Ip7').text.strip(),
+                        'area': int(re.search(r'\d+', card.select_one('.postingMainFeatures-module__posting-main-features-span__ror2o').text).group()),
+                        'link': card.select_one('a')['href']
+                    }
+                    todos_dados.append(dados)
+                except Exception as e:
+                    st.warning(f"Erro no card: {str(e)}")
+            
+            # Tempo entre requisições para evitar bloqueio
+            time.sleep(3)
         
-        # Fechar navegador
-        browser.close()
+        except Exception as e:
+            st.error(f"Erro na página {pagina}: {str(e)}")
     
     status.text("✅ Coleta concluída")
     progresso.progress(1.0)
