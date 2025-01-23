@@ -3,6 +3,7 @@ selenium~=4.10.0
 pandas~=2.1.4
 supabase~=1.2.0
 python-dotenv~=1.0.0
+webdriver-manager
 plotly
 folium
 streamlit-folium
