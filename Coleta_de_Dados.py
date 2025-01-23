@@ -227,143 +227,112 @@ class ScraperImovelWeb:
         try:
             wait = WebDriverWait(imovel, self.config.tempo_espera)
             
-            # XPath mais robustos
-            preco_xpath = "//span[@data-qa='price']"
-            area_xpath = "//span[contains(@data-qa, 'surface')]"
-            endereco_xpath = "//span[@data-qa='location']"
-            
-            # Extrair cardID com fallback
-            try:
-                card_id = imovel.get_attribute('data-id') or imovel.get_attribute('id')
-            except:
-                card_id = f"CARD_{id_global}_{int(time.time())}"
+            # Seletores mais robustos usando data-qa
+            preco_selector = '[data-qa="POSTING_CARD_PRICE"]'
+            area_selector = '[data-qa="POSTING_CARD_FEATURES"]'
+            endereco_selector = '[data-qa="POSTING_CARD_LOCATION"]'
+            link_selector = 'a'
 
-            # Extrair preço com retry
             try:
                 preco_elemento = wait.until(
-                    EC.presence_of_element_located((By.XPATH, preco_xpath))
+                    EC.presence_of_element_located((By.CSS_SELECTOR, preco_selector))
                 )
                 preco_texto = preco_elemento.text
                 preco = float(''.join(filter(str.isdigit, preco_texto.replace(',', '.'))))
             except Exception as e:
                 self.logger.warning(f"Erro ao extrair preço: {e}")
-                return None
+                preco = None
 
-            # Extrair área com retry
             try:
                 area_elemento = wait.until(
-                    EC.presence_of_element_located((By.XPATH, area_xpath))
+                    EC.presence_of_element_located((By.CSS_SELECTOR, area_selector))
                 )
                 area_texto = area_elemento.text
                 area = float(''.join(filter(str.isdigit, area_texto.replace(',', '.'))))
             except Exception as e:
                 self.logger.warning(f"Erro ao extrair área: {e}")
-                return None
+                area = None
 
-            # Extrair endereço e localidade com fallback
             try:
                 endereco_elemento = wait.until(
-                    EC.presence_of_element_located((By.XPATH, endereco_xpath))
+                    EC.presence_of_element_located((By.CSS_SELECTOR, endereco_selector))
                 )
-                endereco_completo = endereco_elemento.text
-                partes = endereco_completo.split(',')
-                localidade = partes[0].strip() if partes else "Não informado"
-                endereco = endereco_completo
+                endereco = endereco_elemento.text
             except Exception as e:
                 self.logger.warning(f"Erro ao extrair endereço: {e}")
                 endereco = "Endereço não disponível"
-                localidade = "Não informado"
 
-            # Extrair link com validação
             try:
-                link = imovel.find_element(By.TAG_NAME, 'a').get_attribute('href')
-                if not link.startswith('http'):
-                    link = f"https://www.imovelweb.com.br{link}"
+                link = imovel.find_element(By.CSS_SELECTOR, link_selector).get_attribute('href')
             except Exception:
                 link = ""
 
             return {
                 'id': id_global,
-                'cardID': card_id,
+                'cardID': imovel.get_attribute('data-id'),
                 'preco_Real': preco,
                 'endereco': endereco,
-                'localidade': localidade,
                 'area_m2': area,
                 'link': link,
                 'data_coleta': datetime.now().strftime("%Y-%m-%d")
-            }
+            } if preco and area else None
 
         except Exception as e:
             self.logger.error(f"Erro ao extrair dados: {str(e)}")
             return None
 
-    def coletar_dados(self, num_paginas: int = 1) -> Optional[pd.DataFrame]:
-        navegador = None
+    def coletar_dados(self, num_paginas: int = 9) -> Optional[pd.DataFrame]:
         todos_dados = []
-        id_global = 0
-        progresso = st.progress(0)
-        status = st.empty()
-
+        navegador = None
+        
         try:
             navegador = self._configurar_navegador()
             if navegador is None:
                 return None
 
             for pagina in range(1, num_paginas + 1):
-                for tentativa in range(self.config.tentativas_max):
-                    try:
-                        if pagina == 1:
-                            navegador.get(self.config.url_base)
-                        else:
-                            url_pagina = f"/terrenos-venda-eusebio-ce-pagina-{pagina}.html"
-                            navegador.get(f"https://www.imovelweb.com.br{url_pagina}")
-                        
-                        status.text(f"⏳ Processando página {pagina}/{num_paginas} (Tentativa {tentativa + 1})")
-                        progresso.progress(pagina / num_paginas)
+                try:
+                    url = (f"{self.config.url_base}pagina-{pagina}.html" 
+                        if pagina > 1 else self.config.url_base)
+                    
+                    navegador.get(url)
+                    time.sleep(random.uniform(3, 5))  # Delay aleatório
+                    
+                    # Rola a página para carregar elementos lazy
+                    self._rolar_pagina(navegador)
+                    
+                    # Espera elementos carregarem
+                    imoveis = wait_for_elements(
+                        navegador,
+                        '[data-qa="posting PROPERTY"]',
+                        timeout=self.config.tempo_espera
+                    )
 
-                        # Delay aleatório entre páginas
-                        time.sleep(random.uniform(
-                            self.config.delay_min,
-                            self.config.delay_max
-                        ))
-                        
-                        self._rolar_pagina(navegador)
-
-                        # Esperar elementos com retry
-                        try:
-                            imoveis = WebDriverWait(navegador, self.config.tempo_espera).until(
-                                EC.presence_of_all_elements_located((
-                                    By.CSS_SELECTOR, 
-                                    'div[data-qa="posting"]'  # Novo seletor mais específico
-                                ))
-                            )
-                        except TimeoutException:
-                            continue
-
-                        for imovel in imoveis:
-                            id_global += 1
-                            if dados := self._extrair_dados_imovel(imovel, id_global, pagina):
-                                todos_dados.append(dados)
-                                time.sleep(random.uniform(0.5, 1.0))
-
-                        break  # Sai do loop de tentativas se sucesso
-                        
-                    except Exception as e:
-                        self.logger.error(f"Erro na página {pagina} (tentativa {tentativa + 1}): {str(e)}")
-                        if tentativa == self.config.tentativas_max - 1:
-                            continue  # Vai para próxima página se todas tentativas falharem
-                        time.sleep(random.uniform(2, 4))  # Espera entre tentativas
-
+                    for imovel in imoveis:
+                        dados = self._extrair_dados_imovel(imovel, len(todos_dados) + 1, pagina)
+                        if dados:
+                            todos_dados.append(dados)
+                            
+                except Exception as e:
+                    self.logger.error(f"Erro na página {pagina}: {e}")
+                    continue
+                    
             return pd.DataFrame(todos_dados) if todos_dados else None
-
-        except Exception as e:
-            self.logger.error(f"Erro crítico: {str(e)}")
-            st.error(f"Erro durante a coleta: {str(e)}")
-            return None
 
         finally:
             if navegador:
                 navegador.quit()
+
+def wait_for_elements(driver, selector, timeout=10):
+    """Função helper para esperar elementos com retry"""
+    start = time.time()
+    while True:
+        elements = driver.find_elements(By.CSS_SELECTOR, selector)
+        if elements:
+            return elements
+        if time.time() - start > timeout:
+            raise TimeoutException()
+        time.sleep(0.5)
 
 def main():
     try:
