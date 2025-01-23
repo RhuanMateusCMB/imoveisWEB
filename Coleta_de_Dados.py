@@ -228,9 +228,9 @@ class ScraperImovelWeb:
             wait = WebDriverWait(imovel, self.config.tempo_espera)
             
             # XPath mais robustos
-            preco_xpath = ".//div[contains(@class, 'price') or contains(@class, 'valor')]//text()[contains(., 'R$')]"
-            area_xpath = ".//div[contains(@class, 'features') or contains(@class, 'caracteristicas')]//text()[contains(., 'm²')]"
-            endereco_xpath = ".//div[contains(@class, 'location') or contains(@class, 'endereco')]"
+            preco_xpath = "//span[@data-qa='price']"
+            area_xpath = "//span[contains(@data-qa, 'surface')]"
+            endereco_xpath = "//span[@data-qa='location']"
             
             # Extrair cardID com fallback
             try:
@@ -334,7 +334,7 @@ class ScraperImovelWeb:
                             imoveis = WebDriverWait(navegador, self.config.tempo_espera).until(
                                 EC.presence_of_all_elements_located((
                                     By.CSS_SELECTOR, 
-                                    '[class*="posting-card"],[class*="imovel-card"]'
+                                    'div[data-qa="posting"]'  # Novo seletor mais específico
                                 ))
                             )
                         except TimeoutException:
