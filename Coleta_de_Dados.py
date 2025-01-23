@@ -4,12 +4,12 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
-import os
+from selenium.webdriver.chrome.service import Service
 import random
 import pandas as pd
 import time
+import os
 
 def get_random_user_agent():
    user_agents = [
@@ -37,18 +37,8 @@ def configurar_navegador():
    opcoes_chrome.add_argument('--disable-extensions')
    opcoes_chrome.add_argument('--disable-gpu')
    
-   # Tente usar ChromeDriverManager, mas tenha um fallback
-   try:
-       service = Service(ChromeDriverManager().install())
-   except Exception as e:
-       # Se falhar, tente usar um caminho padrão do ChromeDriver
-       chrome_driver_path = '/usr/local/bin/chromedriver'
-       if os.path.exists(chrome_driver_path):
-           service = Service(chrome_driver_path)
-       else:
-           # Se todos os métodos falharem, levante o erro
-           raise RuntimeError(f"Não foi possível encontrar o ChromeDriver: {e}")
-   
+   # Usa WebDriverManager para gerenciar o ChromeDriver automaticamente
+   service = Service(ChromeDriverManager(path=os.getcwd()).install())
    navegador = webdriver.Chrome(service=service, options=opcoes_chrome)
    
    navegador.execute_cdp_cmd('Network.setUserAgentOverride', {
