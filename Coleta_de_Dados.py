@@ -297,7 +297,7 @@ class ScraperImovelWeb:
             self.logger.error(f"Erro ao extrair dados: {str(e)}")
             return None
 
-    def coletar_dados(self, num_paginas: int = 9) -> Optional[pd.DataFrame]:
+    def coletar_dados(self, num_paginas: int = 1) -> Optional[pd.DataFrame]:
         navegador = None
         todos_dados = []
         id_global = 0
