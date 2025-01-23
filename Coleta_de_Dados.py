@@ -166,6 +166,9 @@ class ScraperImovelWeb:
     def _configurar_navegador(self) -> webdriver.Chrome:
         try:
             opcoes_chrome = Options()
+            opcoes_chrome.add_argument('--remote-debugging-port=9222')
+            opcoes_chrome.add_argument('--no-sandbox')
+            opcoes_chrome.add_argument('--disable-dev-shm-usage')
             opcoes_chrome.add_argument('--headless=new')
             opcoes_chrome.add_argument('--no-sandbox')
             opcoes_chrome.add_argument('--disable-dev-shm-usage')
