@@ -142,7 +142,7 @@ class ScraperImovelWeb:
             }
             opcoes_chrome.add_experimental_option("prefs", prefs)
             
-            service = Service(ChromeDriverManager().install())
+            service = Service(ChromeDriverManager("120.0.6099.224").install())
             navegador = webdriver.Chrome(service=service, options=opcoes_chrome)
             navegador.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
                 'source': '''
