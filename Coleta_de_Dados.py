@@ -80,19 +80,19 @@ class SupabaseManager:
         self.supabase = create_client(self.url, self.key)
 
     def inserir_dados(self, df):
-        result = self.supabase.table('imoveisdireto').select('id').order('id.desc').limit(1).execute()
+        result = self.supabase.table('imoveisweb').select('id').order('id.desc').limit(1).execute()
         ultimo_id = result.data[0]['id'] if result.data else 0
         
         df['id'] = df['id'].apply(lambda x: x + ultimo_id)
         df['data_coleta'] = pd.to_datetime(df['data_coleta']).dt.strftime('%Y-%m-%d')
         
         registros = df.to_dict('records')
-        self.supabase.table('imoveisdireto').insert(registros).execute()
+        self.supabase.table('imoveisweb').insert(registros).execute()
 
     def verificar_coleta_hoje(self):
         try:
             hoje = datetime.now().strftime('%Y-%m-%d')
-            result = self.supabase.table('imoveisdireto').select('data_coleta').eq('data_coleta', hoje).execute()
+            result = self.supabase.table('imoveisweb').select('data_coleta').eq('data_coleta', hoje).execute()
             return len(result.data) > 0
         except Exception as e:
             st.error(f"Erro ao verificar coleta: {str(e)}")
