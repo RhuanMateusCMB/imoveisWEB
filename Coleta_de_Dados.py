@@ -21,6 +21,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.common.exceptions import TimeoutException, StaleElementReferenceException, NoSuchElementException
+from webdriver_manager.chrome import ChromeDriverManager
 
 # Utilitários
 import time
@@ -189,7 +190,7 @@ class ScraperImovelWeb:
             }
             opcoes_chrome.add_experimental_option("prefs", prefs)
             
-            service = Service("/usr/bin/chromedriver")
+            service = Service(ChromeDriverManager().install())
             navegador = webdriver.Chrome(service=service, options=opcoes_chrome)
             navegador.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
                 'source': '''
