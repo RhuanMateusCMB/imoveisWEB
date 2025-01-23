@@ -1,215 +1,141 @@
 import streamlit as st
-import requests
-from fake_useragent import UserAgent
-import pandas as pd
-from bs4 import BeautifulSoup
-import re
-from datetime import datetime
-import logging
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
 import random
+import pandas as pd
 import time
-from typing import Optional, Dict, List
-from dataclasses import dataclass
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+def get_random_user_agent():
+   user_agents = [
+       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36'
+   ]
+   return random.choice(user_agents)
 
-@dataclass
-class ConfiguracaoScraper:
-    tempo_espera: int = 15
-    url_base: str = "https://www.imovelweb.com.br/terrenos-venda-eusebio-ce.html"
-    tentativas_max: int = 5
-    delay_min: float = 3.0
-    delay_max: float = 7.0
+def configurar_navegador():
+   opcoes_chrome = Options()
+   opcoes_chrome.add_argument('--headless=new')
+   opcoes_chrome.add_argument('--no-sandbox')
+   opcoes_chrome.add_argument('--disable-dev-shm-usage')
+   opcoes_chrome.add_argument('--window-size=1920,1080')
+   opcoes_chrome.add_argument('--disable-blink-features=AutomationControlled')
+   opcoes_chrome.add_argument('--enable-javascript')
+   
+   user_agent = get_random_user_agent()
+   opcoes_chrome.add_argument(f'--user-agent={user_agent}')
+   opcoes_chrome.add_argument('--accept-language=pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7')
+   
+   opcoes_chrome.add_argument('--disable-notifications')
+   opcoes_chrome.add_argument('--disable-popup-blocking')
+   opcoes_chrome.add_argument('--disable-extensions')
+   opcoes_chrome.add_argument('--disable-gpu')
+   
+   service = Service(ChromeDriverManager().install())
+   navegador = webdriver.Chrome(service=service, options=opcoes_chrome)
+   
+   navegador.execute_cdp_cmd('Network.setUserAgentOverride', {
+       "userAgent": user_agent,
+       "platform": "Windows NT 10.0; Win64; x64"
+   })
+   
+   navegador.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+   navegador.execute_script("Object.defineProperty(navigator, 'languages', {get: () => ['pt-BR', 'pt']})")
+   navegador.execute_script("Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]})")
+   
+   return navegador
 
-class ScraperImovelWeb:
-    def __init__(self, config: ConfiguracaoScraper):
-        self.config = config
-        self.ua = UserAgent()
-        self.session = requests.Session()
+def converter_preco(preco_str):
+    try:
+        # Remove R$ and any spaces
+        preco_limpo = preco_str.replace('R$', '').replace(' ', '')
+        # Replace dot with empty string (for thousand separator)
+        preco_numerico = float(preco_limpo.replace('.', '').replace(',', '.'))
+        return preco_numerico
+    except (ValueError, AttributeError):
+        return None
 
-    def _gerar_headers(self) -> Dict[str, str]:
-        """Gera headers realistas para requisições."""
-        return {
-            'User-Agent': self.ua.random,
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'pt-BR,pt;q=0.8,en-US;q=0.5,en;q=0.3',
-            'Referer': 'https://www.google.com',
-            'DNT': '1',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
-            'Cache-Control': 'max-age=0',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'sec-ch-ua': '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
-            'sec-ch-ua-mobile': '?0',
-            'sec-ch-ua-platform': '"Windows"'
-        }
-
-    def _limpar_valor(self, texto: str) -> Optional[float]:
-        """Limpa e converte valores monetários ou numéricos."""
-        try:
-            # Remove caracteres não numéricos exceto vírgula
-            valor_limpo = ''.join(c for c in texto if c.isdigit() or c == ',')
-            return float(valor_limpo.replace(',', '.'))
-        except (ValueError, TypeError):
-            return None
-
-    def _extrair_dados_imovel(self, imovel, id_global: int, pagina: int) -> Optional[Dict]:
-        """Extrai dados de um imóvel usando BeautifulSoup."""
-        try:
-            # Seletores múltiplos para maior robustez
-            seletores_preco = [
-                {'tag': 'span', 'class': re.compile(r'(price|valor)')},
-                {'tag': 'div', 'class': re.compile(r'(price|valor)')}
-            ]
-            
-            seletores_area = [
-                {'tag': 'span', 'class': re.compile(r'(area|tamanho)')},
-                {'tag': 'div', 'class': re.compile(r'(area|tamanho)')}
-            ]
-            
-            seletores_endereco = [
-                {'tag': 'span', 'class': re.compile(r'(address|localizacao)')},
-                {'tag': 'div', 'class': re.compile(r'(address|localizacao)')}
-            ]
-
-            def encontrar_elemento(seletores):
-                for selector in seletores:
-                    elemento = imovel.find(selector['tag'], class_=selector['class'])
-                    if elemento:
-                        return elemento
-                return None
-
-            # Extrair preço
-            preco_elem = encontrar_elemento(seletores_preco)
-            preco = self._limpar_valor(preco_elem.text) if preco_elem else None
-
-            # Extrair área
-            area_elem = encontrar_elemento(seletores_area)
-            area = self._limpar_valor(area_elem.text) if area_elem else None
-
-            # Extrair endereço
-            endereco_elem = encontrar_elemento(seletores_endereco)
-            endereco = endereco_elem.text.strip() if endereco_elem else "Endereço não disponível"
-
-            # Extrair link
-            link_elem = imovel.find('a', href=True)
-            link = link_elem['href'] if link_elem else ""
-
-            return {
-                'id': id_global,
-                'preco_Real': preco,
-                'endereco': endereco,
-                'area_m2': area,
-                'link': link,
-                'data_coleta': datetime.now().strftime("%Y-%m-%d")
-            } if preco and area else None
-
-        except Exception as e:
-            logger.error(f"Erro ao extrair dados na página {pagina}: {e}")
-            return None
-
-    def coletar_dados(self, num_paginas: int = 9) -> Optional[pd.DataFrame]:
-        """Coleta dados de múltiplas páginas."""
-        todos_dados = []
-        
-        for pagina in range(1, num_paginas + 1):
-            tentativas = 0
-            while tentativas < self.config.tentativas_max:
-                try:
-                    # Construir URL
-                    url = (f"{self.config.url_base}pagina-{pagina}.html" 
-                        if pagina > 1 else self.config.url_base)
-                    
-                    # Adicionar delay entre requisições
-                    time.sleep(random.uniform(self.config.delay_min, self.config.delay_max))
-                    
-                    # Fazer requisição com headers
-                    resposta = self.session.get(
-                        url, 
-                        headers=self._gerar_headers(),
-                        timeout=30,
-                        allow_redirects=True
-                    )
-                    
-                    # Verificar sucesso da requisição
-                    if resposta.status_code in [200, 302]:
-                        # Parsear HTML
-                        soup = BeautifulSoup(resposta.text, 'html.parser')
-                        
-                        # Encontrar elementos de imóveis com múltiplos seletores
-                        seletores_imoveis = [
-                            {'tag': 'div', 'class': re.compile(r'(property|card|listing)')},
-                            {'tag': 'article', 'class': re.compile(r'(property|card|listing)')}
-                        ]
-                        
-                        imoveis_encontrados = False
-                        for selector in seletores_imoveis:
-                            imoveis = soup.find_all(selector['tag'], class_=selector['class'])
-                            
-                            if imoveis:
-                                imoveis_encontrados = True
-                                logger.info(f"Página {pagina}: {len(imoveis)} imóveis encontrados")
-                                
-                                for imovel in imoveis:
-                                    dados = self._extrair_dados_imovel(imovel, len(todos_dados) + 1, pagina)
-                                    if dados:
-                                        todos_dados.append(dados)
-                                break
-                        
-                        if not imoveis_encontrados:
-                            logger.warning(f"Nenhum imóvel encontrado na página {pagina}")
-                        
-                        # Sair do loop de tentativas se sucesso
-                        break
-                    
-                    else:
-                        logger.error(f"Erro ao acessar página {pagina}: {resposta.status_code}")
-                        logger.error(f"Conteúdo da resposta: {resposta.text[:500]}")
-                        tentativas += 1
-                        time.sleep(random.uniform(2, 5))  # Delay entre tentativas
-                
-                except Exception as e:
-                    logger.error(f"Erro na página {pagina}: {e}")
-                    tentativas += 1
-                    time.sleep(random.uniform(2, 5))  # Delay entre tentativas
-        
-        return pd.DataFrame(todos_dados) if todos_dados else None
+def extrair_dados_pagina(url):
+   todos_dados = []
+   
+   progresso = st.progress(0)
+   status = st.empty()
+   
+   for pagina in range(1, 10):
+       driver = configurar_navegador()
+       try:
+           status.text(f"⏳ Processando página {pagina}/9")
+           progresso.progress(pagina / 9)
+           
+           url_pagina = url + f'?pagina={pagina}' if pagina > 1 else url
+           driver.get(url_pagina)
+           
+           WebDriverWait(driver, 45).until(
+               EC.presence_of_element_located((By.CLASS_NAME, "postings-container"))
+           )
+           
+           time.sleep(5)
+           
+           container = driver.find_element(By.CLASS_NAME, "postings-container")
+           cards = container.find_elements(By.CLASS_NAME, "postingCardLayout-module__posting-card-layout__Lklt9")
+           
+           for card in cards:
+               try:
+                   preco_str = WebDriverWait(card, 10).until(
+                       EC.presence_of_element_located((By.CSS_SELECTOR, '[data-qa="POSTING_CARD_PRICE"]'))
+                   ).text
+                   
+                   area_str = WebDriverWait(card, 10).until(
+                       EC.presence_of_element_located((By.CLASS_NAME, 'postingMainFeatures-module__posting-main-features-span__ror2o'))
+                   ).text
+                   
+                   dados = {
+                       'card_id': card.get_attribute('data-id'),
+                       'preco': converter_preco(preco_str),
+                       'localizacao': WebDriverWait(card, 10).until(
+                           EC.presence_of_element_located((By.CSS_SELECTOR, '[data-qa="POSTING_CARD_LOCATION"]'))
+                       ).text,
+                       'endereco': card.find_element(By.CLASS_NAME, 'postingLocations-module__location-address__k8Ip7').text,
+                       'area': int(area_str.split()[0]),
+                       'link': card.find_element(By.CSS_SELECTOR, 'a').get_attribute('href')
+                   }
+                   todos_dados.append(dados)
+               except Exception as e:
+                   st.warning(f"Erro no card: {str(e)}")
+           
+           time.sleep(3)
+       
+       except Exception as e:
+           st.error(f"Erro na página {pagina}: {str(e)}")
+           driver.save_screenshot(f'error_page_{pagina}.png')
+       
+       finally:
+           driver.quit()
+   
+   status.text("✅ Coleta concluída")
+   progresso.progress(1.0)
+   
+   return todos_dados
 
 def main():
-    st.title("🏗️ Coleta de Terrenos em Eusébio, CE")
-    
-    # Adicionar controle de erro
-    try:
-        config = ConfiguracaoScraper()
-        scraper = ScraperImovelWeb(config)
-        
-        if st.button("Iniciar Coleta"):
-            with st.spinner("Coletando dados..."):
-                df = scraper.coletar_dados()
-                
-                if df is not None and not df.empty:
-                    st.success(f"Coleta concluída. {len(df)} registros encontrados.")
-                    st.dataframe(df)
-                    
-                    # Opção para salvar CSV
-                    csv = df.to_csv(index=False)
-                    st.download_button(
-                        label="Baixar dados como CSV",
-                        data=csv,
-                        file_name='terrenos_eusebio.csv',
-                        mime='text/csv'
-                    )
-                else:
-                    st.warning("Nenhum dado coletado.")
-    
-    except Exception as e:
-        st.error(f"Erro crítico: {e}")
-        logger.error(f"Erro crítico na execução: {e}")
+   st.title('Extrator de Dados - Lotes em Eusébio')
+   
+   if st.button('Iniciar Extração'):
+       with st.spinner('Extraindo...'):
+           url = 'https://www.imovelweb.com.br/terrenos-venda-eusebio-ce.html'
+           dados = extrair_dados_pagina(url)
+           
+           if dados:
+               df = pd.DataFrame(dados)
+               st.dataframe(df)
+               st.download_button('Download CSV', df.to_csv(index=False).encode('utf-8'), 'lotes_eusebio.csv')
+           else:
+               st.error('Nenhum dado extraído')
 
-if __name__ == "__main__":
-    main()
+if __name__ == '__main__':
+   main()
