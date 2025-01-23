@@ -20,41 +20,41 @@ def get_random_user_agent():
    return random.choice(user_agents)
 
 def configurar_navegador(self) -> webdriver.Chrome:
-        try:
-            opcoes_chrome = Options()
-            opcoes_chrome.add_argument('--headless=new')
-            opcoes_chrome.add_argument('--no-sandbox')
-            opcoes_chrome.add_argument('--disable-dev-shm-usage')
-            opcoes_chrome.add_argument('--window-size=1920,1080')
-            opcoes_chrome.add_argument('--disable-blink-features=AutomationControlled')
-            opcoes_chrome.add_argument('--enable-javascript')
-            
-            user_agent = self._get_random_user_agent()
-            opcoes_chrome.add_argument(f'--user-agent={user_agent}')
-            opcoes_chrome.add_argument('--accept-language=pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7')
-            opcoes_chrome.add_argument('--accept=text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8')
-            
-            opcoes_chrome.add_argument('--disable-notifications')
-            opcoes_chrome.add_argument('--disable-popup-blocking')
-            opcoes_chrome.add_argument('--disable-extensions')
-            opcoes_chrome.add_argument('--disable-gpu')
-            
-            service = Service("/usr/bin/chromedriver")
-            navegador = webdriver.Chrome(service=service, options=opcoes_chrome)
-            
-            navegador.execute_cdp_cmd('Network.setUserAgentOverride', {
-                "userAgent": user_agent,
-                "platform": "Windows NT 10.0; Win64; x64"
-            })
-            
-            navegador.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-            navegador.execute_script("Object.defineProperty(navigator, 'languages', {get: () => ['pt-BR', 'pt']})")
-            navegador.execute_script("Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]})")
-            
-            return navegador
-        except Exception as e:
-            self.logger.error(f"Erro ao configurar navegador: {str(e)}")
-            return None
+    try:
+        opcoes_chrome = Options()
+        opcoes_chrome.add_argument('--headless=new')
+        opcoes_chrome.add_argument('--no-sandbox')
+        opcoes_chrome.add_argument('--disable-dev-shm-usage')
+        opcoes_chrome.add_argument('--window-size=1920,1080')
+        opcoes_chrome.add_argument('--disable-blink-features=AutomationControlled')
+        opcoes_chrome.add_argument('--enable-javascript')
+        
+        user_agent = self._get_random_user_agent()
+        opcoes_chrome.add_argument(f'--user-agent={user_agent}')
+        opcoes_chrome.add_argument('--accept-language=pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7')
+        opcoes_chrome.add_argument('--accept=text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8')
+        
+        opcoes_chrome.add_argument('--disable-notifications')
+        opcoes_chrome.add_argument('--disable-popup-blocking')
+        opcoes_chrome.add_argument('--disable-extensions')
+        opcoes_chrome.add_argument('--disable-gpu')
+        
+        service = Service("/usr/bin/chromedriver")
+        navegador = webdriver.Chrome(service=service, options=opcoes_chrome)
+        
+        navegador.execute_cdp_cmd('Network.setUserAgentOverride', {
+            "userAgent": user_agent,
+            "platform": "Windows NT 10.0; Win64; x64"
+        })
+        
+        navegador.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+        navegador.execute_script("Object.defineProperty(navigator, 'languages', {get: () => ['pt-BR', 'pt']})")
+        navegador.execute_script("Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]})")
+        
+        return navegador
+    except Exception as e:
+        self.logger.error(f"Erro ao configurar navegador: {str(e)}")
+        return None
 
 def converter_preco(preco_str):
     try:
