@@ -21,7 +21,7 @@ def get_random_user_agent():
 
 def configurar_navegador():
    opcoes_chrome = Options()
-   opcoes_chrome.add_argument('--headless=new')
+   opcoes_chrome.add_argument('--headless')
    opcoes_chrome.add_argument('--no-sandbox')
    opcoes_chrome.add_argument('--disable-dev-shm-usage')
    opcoes_chrome.add_argument('--window-size=1920,1080')
@@ -37,10 +37,8 @@ def configurar_navegador():
    opcoes_chrome.add_argument('--disable-extensions')
    opcoes_chrome.add_argument('--disable-gpu')
    
-   # Configuração para Streamlit Cloud
-   chrome_driver_path = '/usr/bin/chromedriver'
-   service = Service(chrome_driver_path)
-   
+   # Configuração para ChromeDriver no Streamlit Cloud
+   service = Service(ChromeDriverManager(path=os.getcwd()).install())
    navegador = webdriver.Chrome(service=service, options=opcoes_chrome)
    
    navegador.execute_cdp_cmd('Network.setUserAgentOverride', {
@@ -48,9 +46,12 @@ def configurar_navegador():
        "platform": "Windows NT 10.0; Win64; x64"
    })
    
-   navegador.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-   navegador.execute_script("Object.defineProperty(navigator, 'languages', {get: () => ['pt-BR', 'pt']})")
-   navegador.execute_script("Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]})")
+   # Adicionar scripts para contornar detecção de bot
+   navegador.execute_script("""
+   Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+   Object.defineProperty(navigator, 'languages', {get: () => ['pt-BR', 'pt']});
+   Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
+   """)
    
    return navegador
 
@@ -69,10 +70,12 @@ def extrair_dados_pagina(url):
    status = st.empty()
    
    for pagina in range(1, 10):
-       driver = configurar_navegador()
+       driver = None
        try:
            status.text(f"⏳ Processando página {pagina}/9")
            progresso.progress(pagina / 9)
+           
+           driver = configurar_navegador()
            
            url_pagina = url + f'?pagina={pagina}' if pagina > 1 else url
            driver.get(url_pagina)
@@ -116,7 +119,8 @@ def extrair_dados_pagina(url):
            st.error(f"Erro na página {pagina}: {str(e)}")
        
        finally:
-           driver.quit()
+           if driver:
+               driver.quit()
    
    status.text("✅ Coleta concluída")
    progresso.progress(1.0)
