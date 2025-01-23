@@ -1,5 +1,5 @@
 import streamlit as st
-import cloudscraper
+import requests
 from fake_useragent import UserAgent
 import pandas as pd
 from bs4 import BeautifulSoup
@@ -29,16 +29,8 @@ class ConfiguracaoScraper:
 class ScraperImovelWeb:
     def __init__(self, config: ConfiguracaoScraper):
         self.config = config
-        self.scraper = cloudscraper.create_scraper(
-            browser={
-                'browser': 'chrome',
-                'platform': 'windows',
-                'desktop': True
-            },
-            delay=1,  # Delay entre requisições
-            disable_warnings=True  # Desabilitar avisos
-        )
         self.ua = UserAgent()
+        self.session = requests.Session()
 
     def _gerar_headers(self) -> Dict[str, str]:
         """Gera headers realistas para requisições."""
@@ -120,7 +112,7 @@ class ScraperImovelWeb:
         except Exception as e:
             logger.error(f"Erro ao extrair dados na página {pagina}: {e}")
             return None
-        
+
     def coletar_dados(self, num_paginas: int = 9) -> Optional[pd.DataFrame]:
         """Coleta dados de múltiplas páginas."""
         todos_dados = []
@@ -137,7 +129,7 @@ class ScraperImovelWeb:
                     time.sleep(random.uniform(self.config.delay_min, self.config.delay_max))
                     
                     # Fazer requisição com headers
-                    resposta = self.scraper.get(
+                    resposta = self.session.get(
                         url, 
                         headers=self._gerar_headers(),
                         timeout=30,
@@ -191,27 +183,33 @@ class ScraperImovelWeb:
 def main():
     st.title("🏗️ Coleta de Terrenos em Eusébio, CE")
     
-    config = ConfiguracaoScraper()
-    scraper = ScraperImovelWeb(config)
-    
-    if st.button("Iniciar Coleta"):
-        with st.spinner("Coletando dados..."):
-            df = scraper.coletar_dados()
-            
-            if df is not None and not df.empty:
-                st.success(f"Coleta concluída. {len(df)} registros encontrados.")
-                st.dataframe(df)
+    # Adicionar controle de erro
+    try:
+        config = ConfiguracaoScraper()
+        scraper = ScraperImovelWeb(config)
+        
+        if st.button("Iniciar Coleta"):
+            with st.spinner("Coletando dados..."):
+                df = scraper.coletar_dados()
                 
-                # Opção para salvar CSV
-                csv = df.to_csv(index=False)
-                st.download_button(
-                    label="Baixar dados como CSV",
-                    data=csv,
-                    file_name='terrenos_eusebio.csv',
-                    mime='text/csv'
-                )
-            else:
-                st.warning("Nenhum dado coletado.")
+                if df is not None and not df.empty:
+                    st.success(f"Coleta concluída. {len(df)} registros encontrados.")
+                    st.dataframe(df)
+                    
+                    # Opção para salvar CSV
+                    csv = df.to_csv(index=False)
+                    st.download_button(
+                        label="Baixar dados como CSV",
+                        data=csv,
+                        file_name='terrenos_eusebio.csv',
+                        mime='text/csv'
+                    )
+                else:
+                    st.warning("Nenhum dado coletado.")
+    
+    except Exception as e:
+        st.error(f"Erro crítico: {e}")
+        logger.error(f"Erro crítico na execução: {e}")
 
 if __name__ == "__main__":
     main()
