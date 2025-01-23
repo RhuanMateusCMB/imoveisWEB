@@ -173,6 +173,7 @@ class ScraperImovelWeb:
             opcoes_chrome.add_argument('--headless=new')
             opcoes_chrome.add_argument('--no-sandbox')
             opcoes_chrome.add_argument('--disable-dev-shm-usage')
+            opcoes_chrome.add_experimental_option('excludeSwitches', ['enable-logging'])
             opcoes_chrome.add_argument('--disable-gpu')
             opcoes_chrome.add_argument('--disable-infobars')
             opcoes_chrome.add_argument('--window-size=1920,1080')
@@ -190,7 +191,7 @@ class ScraperImovelWeb:
             }
             opcoes_chrome.add_experimental_option("prefs", prefs)
             
-            service = Service(ChromeDriverManager().install())
+            service = Service(ChromeDriverManager("120.0.6099.224").install())
             navegador = webdriver.Chrome(service=service, options=opcoes_chrome)
             navegador.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
                 'source': '''
