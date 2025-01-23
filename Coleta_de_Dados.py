@@ -4,8 +4,8 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome import service as chrome_service
 import random
 import pandas as pd
 import time
@@ -37,8 +37,9 @@ def configurar_navegador():
    opcoes_chrome.add_argument('--disable-extensions')
    opcoes_chrome.add_argument('--disable-gpu')
    
-   # Usa WebDriverManager para gerenciar o ChromeDriver automaticamente
-   service = Service(ChromeDriverManager(path=os.getcwd()).install())
+   # Usa serviço padrão do ChromeDriver
+   service = Service('/usr/bin/chromedriver')
+   
    navegador = webdriver.Chrome(service=service, options=opcoes_chrome)
    
    navegador.execute_cdp_cmd('Network.setUserAgentOverride', {
