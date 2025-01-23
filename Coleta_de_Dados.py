@@ -255,6 +255,7 @@ class ScraperImovelWeb:
         try:
             navegador = self._configurar_navegador()
             if navegador is None:
+                logger.error("Navegador não configurado")
                 return None
 
             for pagina in range(1, num_paginas + 1):
@@ -265,6 +266,10 @@ class ScraperImovelWeb:
                     navegador.get(url)
                     time.sleep(random.uniform(3, 5))  # Delay aleatório
                     
+                    # Log do HTML da página para debug
+                    page_source = navegador.page_source
+                    logger.info(f"Página {pagina} HTML (primeiros 1000 caracteres): {page_source[:1000]}")
+                    
                     # Rola a página para carregar elementos lazy
                     self._rolar_pagina(navegador)
                     
@@ -272,12 +277,15 @@ class ScraperImovelWeb:
                     seletores_imoveis = [
                         '[data-qa="posting PROPERTY"]',
                         '.imovel-card',
-                        '[class*="property-card"]'
+                        '[class*="property-card"]',
+                        '[data-id]',  # Fallback para qualquer elemento com data-id
+                        '.listing-item'
                     ]
 
                     imoveis_encontrados = False
                     for selector in seletores_imoveis:
                         imoveis = navegador.find_elements(By.CSS_SELECTOR, selector)
+                        logger.info(f"Selector {selector}: {len(imoveis)} elementos encontrados")
                         if imoveis:
                             imoveis_encontrados = True
                             break
